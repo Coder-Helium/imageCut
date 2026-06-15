@@ -1,0 +1,21 @@
+[
+  {
+    "epoch": 1,
+    "train_loss": 4.380715012550354,
+    "train_loss_l1": 0.2053123414516449,
+    "train_loss_giou": 0.7349172383546829,
+    "train_loss_score": 0.041712417267262936,
+    "train_loss_action": 2.7071266174316406,
+    "train_loss_issue": 3.5752893686294556,
+    "train_loss_neg_score": 0.5324935019016266,
+    "val_loss": 4.049981117248535,
+    "val_loss_l1": 0.19805282354354858,
+    "val_loss_giou": 0.7125140875577927,
+    "val_loss_score": 0.03898329008370638,
+    "val_loss_action": 2.3438934683799744,
+    "val_loss_issue": 3.285602390766144,
+    "val_loss_neg_score": 0.5172809362411499,
+    "val_top1_iou": 0.41842222958803177,
+    "val_acc_iou75": 0.0
+  }
+]

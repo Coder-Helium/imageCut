@@ -1,0 +1,24 @@
+seed: 42
+device: auto
+output_dir: runs/dacc_ranker_smoke
+epochs: 1
+batch_size: 4
+num_workers: 0
+lr: 0.0003
+weight_decay: 0.0001
+model:
+  width: 24
+  feat_dim: 96
+train_dataset:
+  jsonl_path: runs/dacc_smoke_data/metadata/all.jsonl
+  image_size: 128
+  crop_size: 128
+  max_records: null
+  max_candidates_per_record: 4
+val_dataset:
+  jsonl_path: runs/dacc_smoke_data/metadata/all.jsonl
+  image_size: 128
+  crop_size: 128
+  max_records: null
+  max_candidates_per_record: 4
+

@@ -1,0 +1,12 @@
+key,value
+status,done
+image_root,/Users/hmx/XMU/image_cut/caption-rule-co/test
+out_dir,/Users/hmx/XMU/image_cut/runs/dacc_dataset_openai_regression_check
+num_images,1
+num_samples,2
+num_failed_images,0
+semantic_counts,{'single_static_portrait': 2}
+aspect_counts,"{'original': 1, '4:5': 1}"
+elapsed_sec,1.85
+records_path,/Users/hmx/XMU/image_cut/runs/dacc_dataset_openai_regression_check/metadata/all.jsonl
+failed_path,/Users/hmx/XMU/image_cut/runs/dacc_dataset_openai_regression_check/metadata/failed.jsonl

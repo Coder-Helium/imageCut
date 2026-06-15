@@ -1,0 +1,34 @@
+seed: 42
+device: auto
+output_dir: runs/daccnet_small
+epochs: 30
+batch_size: 16
+num_workers: 4
+lr: 0.0001
+weight_decay: 0.0001
+model:
+  num_queries: 8
+  width: 64
+  hidden_dim: 256
+  num_decoder_layers: 3
+  nhead: 8
+train_dataset:
+  jsonl_path: data/dacc_dataset/metadata/train.jsonl
+  image_size: 384
+  max_records: null
+  max_targets: 8
+  min_positive_score: 3.5
+val_dataset:
+  jsonl_path: data/dacc_dataset/metadata/val.jsonl
+  image_size: 384
+  max_records: null
+  max_targets: 8
+  min_positive_score: 3.5
+loss_weights:
+  box_l1: 2.0
+  giou: 2.0
+  score: 0.5
+  action: 0.5
+  issue: 0.3
+  neg_score: 0.1
+

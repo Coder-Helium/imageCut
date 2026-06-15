@@ -1,0 +1,24 @@
+seed: 42
+device: auto
+output_dir: runs/dacc_ranker_small
+epochs: 20
+batch_size: 32
+num_workers: 4
+lr: 0.0001
+weight_decay: 0.0001
+model:
+  width: 48
+  feat_dim: 192
+train_dataset:
+  jsonl_path: data/dacc_dataset/metadata/train.jsonl
+  image_size: 224
+  crop_size: 224
+  max_records: null
+  max_candidates_per_record: 80
+val_dataset:
+  jsonl_path: data/dacc_dataset/metadata/val.jsonl
+  image_size: 224
+  crop_size: 224
+  max_records: null
+  max_candidates_per_record: 80
+

@@ -1,0 +1,42 @@
+{
+  "image": "runs/dacc_smoke_data/images/smoke_000.jpg",
+  "aspect": "4:5",
+  "predictions": [
+    {
+      "rank": 1,
+      "box": [
+        314,
+        220,
+        605,
+        584
+      ],
+      "score": 0.5413126945495605,
+      "action": "keep_upper_body",
+      "issue": "subject_too_large"
+    },
+    {
+      "rank": 2,
+      "box": [
+        326,
+        209,
+        636,
+        597
+      ],
+      "score": 0.5393279194831848,
+      "action": "keep_full_body",
+      "issue": "subject_too_large"
+    },
+    {
+      "rank": 3,
+      "box": [
+        298,
+        196,
+        608,
+        583
+      ],
+      "score": 0.532396674156189,
+      "action": "zoom_out",
+      "issue": "subject_right_too_tight"
+    }
+  ]
+}
