@@ -267,6 +267,10 @@ Analyze the image for cropping and output these fields:
 All importance and confidence fields must be numbers from 0 to 1, such as 1.0, 0.85, 0.55, 0.25.
 Do not output text grades such as "high", "medium", or "low".
 
+For key_objects, include only objects that materially affect cropping, such as people, animals,
+held objects, vehicles, or strong relation objects. Do not list tiny accessories, reflections,
+clothing details, or guessed objects unless they are central to the composition.
+
 suggested_actions must come from:
 move_left, move_right, move_up, move_down, zoom_in, zoom_out,
 place_subject_center, place_subject_left_third, place_subject_right_third,

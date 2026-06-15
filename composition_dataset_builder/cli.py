@@ -28,8 +28,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--openai-base-url", default="", help="OpenAI API base URL. Defaults to env OPENAI_BASE_URL or https://api.openai.com/v1.")
     parser.add_argument("--openai-image-detail", default="auto", choices=["auto", "low", "high"], help="Responses API image detail level.")
 
-    parser.add_argument("--detector", default="none", choices=["none", "vlm", "yolo"], help="Object detector.")
-    parser.add_argument("--yolo-model", default="", help="YOLO model path.")
+    parser.add_argument("--detector", default="none", choices=["none", "vlm", "yolo", "yolo_world"], help="Object detector.")
+    parser.add_argument("--yolo-model", default="", help="YOLO model path. For --detector yolo_world, defaults to yolov8s-world.pt.")
     parser.add_argument("--yolo-conf", type=float, default=0.15)
 
     parser.add_argument("--segmenter", default="bbox", choices=["bbox", "sam"], help="Segmentation backend.")

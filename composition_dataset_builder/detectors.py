@@ -59,6 +59,49 @@ class YOLODetector(Detector):
         return detections
 
 
+class YOLOWorldDetector(Detector):
+    """Open-vocabulary detector using VLM object names as class prompts."""
+
+    def __init__(self, model_path: str = "yolov8s-world.pt", conf: float = 0.10):
+        try:
+            from ultralytics import YOLOWorld
+        except Exception as exc:
+            raise RuntimeError("ultralytics with YOLOWorld support is required for YOLOWorldDetector") from exc
+        self.model = YOLOWorld(model_path)
+        if hasattr(self.model, "overrides"):
+            self.model.overrides["verbose"] = False
+        self.conf = conf
+
+    def detect(self, image_path: str, vlm_understanding: Dict[str, Any], image_w: int, image_h: int) -> List[Detection]:
+        classes = _classes_from_vlm(vlm_understanding)
+        if hasattr(self.model, "set_classes") and classes:
+            self.model.set_classes(classes)
+        results = self.model.predict(image_path, conf=self.conf, verbose=False)
+        detections: List[Detection] = []
+        if not results:
+            return fallback_subject_detection(vlm_understanding, image_w, image_h)
+        result = results[0]
+        names = result.names
+        if result.boxes is None or len(result.boxes) == 0:
+            return fallback_subject_detection(vlm_understanding, image_w, image_h)
+        for box in result.boxes:
+            score = float(box.conf[0].detach().cpu().item())
+            cls_id = int(box.cls[0].detach().cpu().item())
+            xyxy = box.xyxy[0].detach().cpu().numpy().tolist()
+            bbox = clip_box(BBox.from_seq(xyxy), image_w, image_h)
+            if bbox.area() < 4.0:
+                continue
+            detections.append(
+                Detection(
+                    name=str(names.get(cls_id, cls_id)),
+                    bbox=bbox,
+                    confidence=score,
+                    source="yolo_world",
+                )
+            )
+        return detections or fallback_subject_detection(vlm_understanding, image_w, image_h)
+
+
 def create_detector(kind: str, model_path: Optional[str] = None, conf: float = 0.15) -> Detector:
     kind = (kind or "none").lower()
     if kind in {"none", "noop", "vlm"}:
@@ -67,6 +110,8 @@ def create_detector(kind: str, model_path: Optional[str] = None, conf: float = 0
         if not model_path:
             raise ValueError("--yolo-model is required when --detector yolo")
         return YOLODetector(model_path=model_path, conf=conf)
+    if kind in {"yolo_world", "yoloworld", "open_vocab_yolo"}:
+        return YOLOWorldDetector(model_path=model_path or "yolov8s-world.pt", conf=conf)
     raise ValueError(f"Unknown detector: {kind}")
 
 
@@ -131,6 +176,36 @@ def fallback_subject_detection(vlm: Dict[str, Any], image_w: int, image_h: int) 
     ]
 
 
+def _classes_from_vlm(vlm: Dict[str, Any]) -> List[str]:
+    classes: List[str] = []
+
+    def add(value: Any) -> None:
+        text = str(value or "").strip().lower()
+        if not text or len(text) > 40:
+            return
+        if text in {"main subject", "subject", "object", "scene", "background"}:
+            return
+        if text not in classes:
+            classes.append(text)
+
+    main = vlm.get("main_subject") if isinstance(vlm, dict) else None
+    if isinstance(main, dict):
+        add(main.get("name"))
+        add(main.get("category"))
+    elif isinstance(main, str):
+        add(main)
+    for key in ["key_objects", "important_background", "distractors"]:
+        for obj in vlm.get(key, []) or []:
+            if isinstance(obj, dict):
+                add(obj.get("name"))
+                add(obj.get("category"))
+    if not any(x in classes for x in ["person", "man", "woman", "girl", "boy"]):
+        semantic = str(vlm.get("semantic_type", "")).lower()
+        if "person" in semantic or "portrait" in semantic:
+            classes.extend(["person", "woman", "man"])
+    return classes[:20]
+
+
 def _bbox_from_vlm_object(obj: Dict[str, Any], image_w: int, image_h: int) -> Optional[BBox]:
     raw_box = obj.get("bbox") or obj.get("box")
     if raw_box is not None:
@@ -147,11 +222,10 @@ def _bbox_from_vlm_object(obj: Dict[str, Any], image_w: int, image_h: int) -> Op
     values = _float_sequence(raw_norm)
     if values is None:
         return None
-    if max(values) > 1.5 and max(values) <= 100.0 and min(values) >= 0.0:
-        values = [v / 100.0 for v in values]
+    if max(values) > 1.5 and max(values) <= 1000.0 and min(values) >= 0.0:
+        # Qwen3-VL grounding returns relative coordinates in a 0-1000 system.
+        values = [v / 1000.0 for v in values]
         return _box_from_values(values, image_w, image_h, normalized=True)
-    if max(values) > 1.5 and max(values) <= max(float(image_w), float(image_h)) * 1.05:
-        return _box_from_values(values, image_w, image_h, normalized=False)
     if max(values) > 1.5:
         return None
     return _box_from_values(values, image_w, image_h, normalized=True)
