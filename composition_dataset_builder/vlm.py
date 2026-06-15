@@ -274,7 +274,8 @@ preserve_relation, remove_distractor, keep_environment, keep_full_body,
 keep_upper_body, fallback_full_image, no_crop_needed
 
 If the subject or key objects can be localized, add bbox_norm: [x1, y1, x2, y2],
-normalized to [0, 1]. Use numbers only.
+normalized to [0, 1]. Use decimal numbers only, for example [0.18, 0.22, 0.74, 0.91].
+Do not use pixel coordinates such as [394, 555, 602, 998].
 """.strip()
 
 
@@ -298,6 +299,7 @@ Analyze the image for cropping. Identify:
 6. corrective crop actions.
 
 Use normalized bbox coordinates [x1, y1, x2, y2] in [0, 1] when location is visually clear.
+Use decimal numbers only, for example [0.18, 0.22, 0.74, 0.91], not pixel coordinates.
 Suggested actions must come from:
 move_left, move_right, move_up, move_down, zoom_in, zoom_out,
 place_subject_center, place_subject_left_third, place_subject_right_third,

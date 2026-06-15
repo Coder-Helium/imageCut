@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from .geometry import BBox
+from .geometry import BBox, clip_box
 from .schema import Detection
 
 
@@ -84,23 +84,20 @@ def detections_from_vlm_boxes(
         name = str(obj.get("name") or obj.get("category") or role)
         if only_missing and name.lower() in existing_names:
             return
-        bbox = obj.get("bbox") or obj.get("box")
-        if bbox is None and obj.get("bbox_norm") is not None:
-            x1, y1, x2, y2 = [_as_float(v, 0.0) for v in obj["bbox_norm"]]
-            bbox = [x1 * image_w, y1 * image_h, x2 * image_w, y2 * image_h]
+        bbox = _bbox_from_vlm_object(obj, image_w, image_h)
         if bbox is None:
             return
-        try:
-            out.append(
-                Detection(
-                    name=name,
-                    bbox=BBox.from_seq(bbox),
-                    confidence=_as_float(obj.get("confidence", 0.65), 0.65),
-                    source=f"vlm_{role}",
-                )
-            )
-        except Exception:
+        bbox = clip_box(bbox, image_w, image_h)
+        if bbox.area() < 4.0:
             return
+        out.append(
+            Detection(
+                name=name,
+                bbox=bbox,
+                confidence=_as_float(obj.get("confidence", 0.65), 0.65),
+                source=f"vlm_{role}",
+            )
+        )
 
     main = vlm.get("main_subject")
     if isinstance(main, dict):
@@ -132,6 +129,66 @@ def fallback_subject_detection(vlm: Dict[str, Any], image_w: int, image_h: int) 
             source="fallback_center_subject",
         )
     ]
+
+
+def _bbox_from_vlm_object(obj: Dict[str, Any], image_w: int, image_h: int) -> Optional[BBox]:
+    raw_box = obj.get("bbox") or obj.get("box")
+    if raw_box is not None:
+        values = _float_sequence(raw_box)
+        if values is None:
+            return None
+        if max(values) <= 1.5:
+            return _box_from_values(values, image_w, image_h, normalized=True)
+        return _box_from_values(values, image_w, image_h, normalized=False)
+
+    raw_norm = obj.get("bbox_norm")
+    if raw_norm is None:
+        return None
+    values = _float_sequence(raw_norm)
+    if values is None:
+        return None
+    if max(values) > 1.5 and max(values) <= 100.0 and min(values) >= 0.0:
+        values = [v / 100.0 for v in values]
+        return _box_from_values(values, image_w, image_h, normalized=True)
+    if max(values) > 1.5 and max(values) <= max(float(image_w), float(image_h)) * 1.05:
+        return _box_from_values(values, image_w, image_h, normalized=False)
+    if max(values) > 1.5:
+        return None
+    return _box_from_values(values, image_w, image_h, normalized=True)
+
+
+def _box_from_values(values: List[float], image_w: int, image_h: int, normalized: bool) -> BBox:
+    x1, y1, x2, y2 = values
+    if x2 <= x1 or y2 <= y1:
+        # Some VLMs return [x, y, width, height] despite being asked for xyxy.
+        x2 = x1 + max(0.0, values[2])
+        y2 = y1 + max(0.0, values[3])
+    if normalized:
+        return BBox(x1 * image_w, y1 * image_h, x2 * image_w, y2 * image_h)
+    return BBox(x1, y1, x2, y2)
+
+
+def _float_sequence(value: Any) -> Optional[List[float]]:
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return None
+    out: List[float] = []
+    for item in value:
+        number = _as_float_optional(item)
+        if number is None:
+            return None
+        out.append(number)
+    return out
+
+
+def _as_float_optional(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value).strip())
+    except ValueError:
+        return None
 
 
 def _as_float(value: Any, default: float) -> float:
