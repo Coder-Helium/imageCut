@@ -170,12 +170,33 @@ def _importance_for(name: str, vlm: Dict[str, Any]) -> float:
     lname = name.lower()
     main = vlm.get("main_subject")
     if isinstance(main, dict) and lname in {str(main.get("name", "")).lower(), str(main.get("category", "")).lower()}:
-        return float(main.get("importance", 1.0))
+        return _as_float(main.get("importance", 1.0), 1.0)
     for key, default in [("key_objects", 0.8), ("important_background", 0.45), ("distractors", 0.2)]:
         for obj in vlm.get(key, []) or []:
             if not isinstance(obj, dict):
                 continue
             if lname in {str(obj.get("name", "")).lower(), str(obj.get("category", "")).lower()}:
-                return float(obj.get("importance", default))
+                return _as_float(obj.get("importance", default), default)
     return 0.6
 
+
+def _as_float(value, default: float) -> float:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().lower()
+    if text in {"very high", "critical", "essential", "极高", "非常高", "最高", "关键", "必须保留"}:
+        return 1.0
+    if text in {"high", "important", "major", "高", "重要", "主要", "较高"}:
+        return 0.85
+    if text in {"medium", "moderate", "normal", "中", "中等", "一般", "普通", "适中"}:
+        return 0.55
+    if text in {"low", "minor", "低", "较低", "次要", "不太重要"}:
+        return 0.25
+    if text in {"none", "irrelevant", "ignore", "无", "不重要", "忽略", "无需保留"}:
+        return 0.0
+    try:
+        return float(text)
+    except ValueError:
+        return default

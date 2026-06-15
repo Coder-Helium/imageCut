@@ -86,7 +86,7 @@ def detections_from_vlm_boxes(
             return
         bbox = obj.get("bbox") or obj.get("box")
         if bbox is None and obj.get("bbox_norm") is not None:
-            x1, y1, x2, y2 = obj["bbox_norm"]
+            x1, y1, x2, y2 = [_as_float(v, 0.0) for v in obj["bbox_norm"]]
             bbox = [x1 * image_w, y1 * image_h, x2 * image_w, y2 * image_h]
         if bbox is None:
             return
@@ -95,7 +95,7 @@ def detections_from_vlm_boxes(
                 Detection(
                     name=name,
                     bbox=BBox.from_seq(bbox),
-                    confidence=float(obj.get("confidence", 0.65)),
+                    confidence=_as_float(obj.get("confidence", 0.65), 0.65),
                     source=f"vlm_{role}",
                 )
             )
@@ -132,3 +132,25 @@ def fallback_subject_detection(vlm: Dict[str, Any], image_w: int, image_h: int) 
             source="fallback_center_subject",
         )
     ]
+
+
+def _as_float(value: Any, default: float) -> float:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().lower()
+    if text in {"very high", "critical", "essential", "极高", "非常高", "最高", "关键", "必须保留"}:
+        return 1.0
+    if text in {"high", "important", "major", "高", "重要", "主要", "较高"}:
+        return 0.85
+    if text in {"medium", "moderate", "normal", "中", "中等", "一般", "普通", "适中"}:
+        return 0.55
+    if text in {"low", "minor", "低", "较低", "次要", "不太重要"}:
+        return 0.25
+    if text in {"none", "irrelevant", "ignore", "无", "不重要", "忽略", "无需保留"}:
+        return 0.0
+    try:
+        return float(text)
+    except ValueError:
+        return default

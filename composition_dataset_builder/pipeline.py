@@ -147,6 +147,7 @@ class DatasetBuilder:
         caption = caption_for_image(self.captions, image_path, self.image_root)
         semantic_info = route_caption(caption, self.config.caption_rule_root)
         vlm_understanding = self.vlm.understand(str(image_path), caption, semantic_info)
+        output_caption = str(vlm_understanding.get("caption") or caption or "")
         semantic_type = vlm_understanding.get("semantic_type") or semantic_info.get("semantic_type", "unknown")
         detections = self.detector.detect(str(image_path), vlm_understanding, w, h)
 
@@ -207,7 +208,8 @@ class DatasetBuilder:
                 "image_width": w,
                 "image_height": h,
                 "target_aspect_ratio": aspect,
-                "caption": caption,
+                "caption": output_caption,
+                "source_caption": caption,
                 "semantic_type": semantic_type,
                 "semantic_info": semantic_info,
                 "vlm_understanding": vlm_understanding,

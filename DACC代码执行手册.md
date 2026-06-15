@@ -83,7 +83,7 @@ python -m composition_dataset_builder.cli \
   --out-dir data/dacc_dataset \
   --target-aspects original,1:1,4:5,16:9 \
   --vlm qwen \
-  --qwen-model qwen-vl-plus \
+  --qwen-model qwen3-vl-flash \
   --detector yolo \
   --yolo-model caption-rule-co/yolo11n.pt \
   --segmenter sam \
@@ -166,7 +166,7 @@ export CAPTIONS=caption-rule-co/gemini_captions.json
 export OUT_DIR=runs/dacc_dataset_qwen_pilot
 export MAX_IMAGES=20
 export TARGET_ASPECTS=original,4:5
-export QWEN_MODEL=qwen-vl-plus
+export QWEN_MODEL=qwen3-vl-flash
 
 bash scripts/build_dacc_with_qwen.sh
 ```

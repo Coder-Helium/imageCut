@@ -291,7 +291,7 @@ python -m composition_dataset_builder.cli \
   --out-dir data/dacc_dataset \
   --target-aspects original,1:1,4:5,16:9 \
   --vlm qwen \
-  --qwen-model qwen-vl-plus \
+  --qwen-model qwen3-vl-flash \
   --detector yolo \
   --yolo-model caption-rule-co/yolo11n.pt \
   --segmenter sam \
