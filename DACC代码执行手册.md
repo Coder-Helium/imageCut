@@ -19,6 +19,11 @@ dacc/
 
 scripts/
   create_smoke_dataset.py   生成可运行 toy 数据
+  gaic_to_dacc_jsonl.py      将 GAICD annotations 转成 DACC-style JSONL
+  enrich_gaic_with_vlm_semantics.py
+                            给 GAICD JSONL 增加 VLM 语义中间态
+  eval_gaic_from_dacc_jsonl.py
+                            用 GAICD MOS 标注评估预测裁剪框
   train_ranker.py           训练候选框 ranker
   train_daccnet.py          训练 DACCNet
   eval_ranker.py            评估 ranker
@@ -34,6 +39,12 @@ configs/
 
 composition_dataset_builder/
   数据构建 pipeline
+```
+
+GAICD 与 VLM 语义中间态的完整执行说明见：
+
+```text
+GAICD_VLM中间态生成说明.md
 ```
 
 ## 2. 安装依赖

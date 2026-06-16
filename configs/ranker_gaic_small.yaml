@@ -1,0 +1,23 @@
+seed: 42
+device: auto
+output_dir: runs/gaic_ranker_small
+epochs: 20
+batch_size: 32
+num_workers: 4
+lr: 0.0001
+weight_decay: 0.0001
+model:
+  width: 48
+  feat_dim: 192
+train_dataset:
+  jsonl_path: data/gaic_dacc/metadata/train.jsonl
+  image_size: 224
+  crop_size: 224
+  max_records: null
+  max_candidates_per_record: 90
+val_dataset:
+  jsonl_path: data/gaic_dacc/metadata/test.jsonl
+  image_size: 224
+  crop_size: 224
+  max_records: null
+  max_candidates_per_record: 90

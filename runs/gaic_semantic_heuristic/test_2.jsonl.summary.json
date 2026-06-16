@@ -1,0 +1,9 @@
+{
+  "input_jsonl": "/Users/hmx/XMU/image_cut/data/gaic_dacc/metadata/test.jsonl",
+  "out_jsonl": "/Users/hmx/XMU/image_cut/runs/gaic_semantic_heuristic/test_2.jsonl",
+  "failed_jsonl": "/Users/hmx/XMU/image_cut/runs/gaic_semantic_heuristic/test_2.jsonl.failed.jsonl",
+  "vlm": "heuristic",
+  "processed": 2,
+  "skipped": 0,
+  "failed": 0
+}
