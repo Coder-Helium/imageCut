@@ -89,8 +89,36 @@ python scripts/enrich_gaic_with_vlm_semantics.py \
   --out-jsonl runs/gaic_semantic_heuristic/train.jsonl \
   --vlm heuristic \
   --max-records 5 \
+  --visualize \
   --overwrite
 ```
+
+启用 `--visualize` 后，会额外保存可视化图片。默认目录由 `--out-jsonl` 自动推导，例如上面的命令会输出到：
+
+```text
+runs/gaic_semantic_heuristic/train_vis/
+```
+
+也可以手动指定目录和显示的候选框数量：
+
+```bash
+python scripts/enrich_gaic_with_vlm_semantics.py \
+  --input-jsonl data/gaic_dacc/metadata/train.jsonl \
+  --out-jsonl data/gaic_semantic_qwen/train_5.jsonl \
+  --vlm qwen \
+  --qwen-model qwen3-vl-plus \
+  --max-records 5 \
+  --visualize \
+  --vis-dir data/gaic_semantic_qwen/vis_train_5 \
+  --vis-topk 5 \
+  --overwrite
+```
+
+可视化颜色约定：
+
+- 红框：GAICD 最高 MOS 框，也就是当前 `best_crop`。
+- 绿框：GAICD top-k 候选框。
+- 蓝/紫/橙/黄框：VLM 返回的主体、关键物体、背景、干扰物 bbox；如果 VLM 没有返回 bbox，则不会画这些语义框。
 
 使用 Qwen3-VL：
 
