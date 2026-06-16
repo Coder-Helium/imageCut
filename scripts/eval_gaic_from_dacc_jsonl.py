@@ -28,7 +28,11 @@ def main() -> None:
     parser.add_argument("--candidate-field", default="candidates")
     parser.add_argument("--topk", type=int, default=5)
     parser.add_argument("--score-key", default="pred_score", help="Candidate score key under scores. Falls back to final_score.")
-    parser.add_argument("--coord-mode", default="auto", choices=["auto", "square1024", "image"])
+    parser.add_argument(
+        "--coord-mode",
+        default="auto",
+        choices=["auto", "gaic_yxyx", "image_xyxy", "square1024_xyxy", "gaic", "yxyx", "image", "xyxy", "square1024"],
+    )
     parser.add_argument("--annotation-size", type=int, default=1024)
     parser.add_argument("--out-json", default="")
     parser.add_argument("--print-samples", action="store_true", help="Print per-sample metrics to stdout.")

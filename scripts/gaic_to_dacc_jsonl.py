@@ -24,7 +24,11 @@ def main() -> None:
     parser.add_argument("--gaic-root", required=True, help="GAICD root with images/{train,test} and annotations.")
     parser.add_argument("--out-dir", default="data/gaic_dacc/metadata")
     parser.add_argument("--splits", default="train,test", help="Comma-separated GAICD splits.")
-    parser.add_argument("--coord-mode", default="auto", choices=["auto", "square1024", "image"])
+    parser.add_argument(
+        "--coord-mode",
+        default="auto",
+        choices=["auto", "gaic_yxyx", "image_xyxy", "square1024_xyxy", "gaic", "yxyx", "image", "xyxy", "square1024"],
+    )
     parser.add_argument("--annotation-size", type=int, default=1024)
     parser.add_argument("--no-clip-boxes", action="store_true", help="Keep converted boxes unclipped.")
     parser.add_argument("--max-records", type=int, default=0, help="Debug limit per split; 0 means all.")

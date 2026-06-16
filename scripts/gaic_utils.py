@@ -58,25 +58,63 @@ def resolve_coord_mode(
     coord_mode: str = "auto",
     annotation_size: int = 1024,
 ) -> str:
-    mode = coord_mode.lower()
-    if mode in {"image", "square1024"}:
+    mode = _normalize_coord_mode(coord_mode)
+    if mode in {"gaic_yxyx", "image_xyxy", "square1024_xyxy"}:
         return mode
     if mode != "auto":
         raise ValueError(f"Unknown coord mode: {coord_mode}")
 
-    # GAICD candidate coordinates are commonly stored in a 1024x1024 anchor
-    # space. If one image side is shorter than 1024, raw coordinates may exceed
-    # that side even though the crop is valid after per-axis scaling.
-    max_side = max(image_w, image_h)
-    min_side = min(image_w, image_h)
-    if abs(max_side - annotation_size) <= 4 and min_side < annotation_size - 4:
-        return "square1024"
+    # Official GAICD Matlab code stores boxes as image matrix coordinates:
+    # [row1, col1, row2, col2] = [y1, x1, y2, x2].
+    # Prefer this mode when raw boxes fit the image under row/column semantics.
+    if _all_fit_gaic_yxyx(raw_boxes, image_w, image_h):
+        return "gaic_yxyx"
 
+    # Fallback for DACC-style or already converted xyxy files.
+    if _all_fit_image_xyxy(raw_boxes, image_w, image_h):
+        return "image_xyxy"
+
+    # Legacy fallback for earlier exports that were interpreted as an xyxy box
+    # in a 1024 square coordinate space.
     for box in raw_boxes:
         x1, y1, x2, y2 = box
         if x1 < 0 or y1 < 0 or x2 > image_w or y2 > image_h:
-            return "square1024"
-    return "image"
+            return "square1024_xyxy"
+    return "image_xyxy"
+
+
+def _normalize_coord_mode(coord_mode: str) -> str:
+    mode = coord_mode.lower()
+    aliases = {
+        "image": "image_xyxy",
+        "xyxy": "image_xyxy",
+        "square1024": "square1024_xyxy",
+        "square": "square1024_xyxy",
+        "gaic": "gaic_yxyx",
+        "yxyx": "gaic_yxyx",
+        "matlab": "gaic_yxyx",
+    }
+    return aliases.get(mode, mode)
+
+
+def _all_fit_gaic_yxyx(raw_boxes: Sequence[Sequence[float]], image_w: int, image_h: int) -> bool:
+    if not raw_boxes:
+        return False
+    for box in raw_boxes:
+        y1, x1, y2, x2 = [float(v) for v in box]
+        if y1 < 0 or x1 < 0 or y2 > image_h or x2 > image_w or y2 <= y1 or x2 <= x1:
+            return False
+    return True
+
+
+def _all_fit_image_xyxy(raw_boxes: Sequence[Sequence[float]], image_w: int, image_h: int) -> bool:
+    if not raw_boxes:
+        return False
+    for box in raw_boxes:
+        x1, y1, x2, y2 = [float(v) for v in box]
+        if x1 < 0 or y1 < 0 or x2 > image_w or y2 > image_h or x2 <= x1 or y2 <= y1:
+            return False
+    return True
 
 
 def convert_raw_box(
@@ -87,13 +125,18 @@ def convert_raw_box(
     annotation_size: int = 1024,
     clip: bool = True,
 ) -> List[int]:
-    x1, y1, x2, y2 = [float(v) for v in raw_box]
-    if mode == "square1024":
+    mode = _normalize_coord_mode(mode)
+    if mode == "gaic_yxyx":
+        y1, x1, y2, x2 = [float(v) for v in raw_box]
+    else:
+        x1, y1, x2, y2 = [float(v) for v in raw_box]
+
+    if mode == "square1024_xyxy":
         sx = image_w / float(annotation_size)
         sy = image_h / float(annotation_size)
         x1, x2 = x1 * sx, x2 * sx
         y1, y2 = y1 * sy, y2 * sy
-    elif mode != "image":
+    elif mode not in {"image_xyxy", "gaic_yxyx"}:
         raise ValueError(f"Unknown resolved coord mode: {mode}")
 
     box = [int(round(v)) for v in [x1, y1, x2, y2]]
@@ -180,6 +223,7 @@ def build_gaic_candidates(annotations: Sequence[GaicAnnotation], image_w: int, i
                 "rank": idx,
                 "quality_label": quality_label(float(ann.mos)),
                 "gaic_original_box": [round(float(v), 4) for v in ann.raw_box],
+                "gaic_original_box_format": "y1_x1_y2_x2",
             }
         )
     return candidates

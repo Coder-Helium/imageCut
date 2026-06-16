@@ -45,10 +45,12 @@ GAICD 目录需要是如下结构：
 每个 annotation 文件每行 5 列：
 
 ```text
-x1 y1 x2 y2 MOS
+y1 x1 y2 x2 MOS
 ```
 
-当前脚本默认按 GAICD 常见的 `1024x1024` grid anchor 坐标处理，然后按图像真实宽高做 per-axis scaling。原因是部分图片真实尺寸是 `1024x849` 或 `683x1024`，但标注里会出现 `981` 这类 1024 网格坐标。脚本参数 `--coord-mode auto` 会自动处理这一点。
+这里要特别注意：GAICD 官方 Matlab 代码按图像矩阵下标保存候选框，顺序是 `row1, col1, row2, col2`，也就是 `y1, x1, y2, x2`，不是常见检测框里的 `x1, y1, x2, y2`。转换脚本会把原始 `y1 x1 y2 x2` 转成训练和可视化使用的标准 `x1 y1 x2 y2`。
+
+脚本参数 `--coord-mode auto` 会优先识别 GAICD 官方的 `gaic_yxyx` 格式。只有在输入已经是 DACC-style `xyxy` 或旧版 1024 square 导出时，才会回退到其他模式。
 
 ## 3. 生成 GAICD DACC JSONL
 
@@ -208,14 +210,14 @@ python scripts/enrich_gaic_with_vlm_semantics.py \
     "composition_intent": {},
     "suggested_action": "place_subject_left_third",
     "initial_issue": "subject_too_centered",
-    "gaic_best_crop": [106, 106, 672, 813],
+    "gaic_best_crop": [128, 106, 981, 672],
     "gaic_best_score": 4.0,
     "gaic_num_candidates": 90
   },
   "candidates": [
     {
       "candidate_id": "gaic_001",
-      "box": [106, 106, 672, 813],
+      "box": [128, 106, 981, 672],
       "source": "gaic_anchor",
       "scores": {
         "final_score": 4.0,
@@ -223,10 +225,11 @@ python scripts/enrich_gaic_with_vlm_semantics.py \
       },
       "rank": 1,
       "quality_label": "good",
-      "gaic_original_box": [106, 128, 672, 981]
+      "gaic_original_box": [106, 128, 672, 981],
+      "gaic_original_box_format": "y1_x1_y2_x2"
     }
   ],
-  "best_crop": [106, 106, 672, 813],
+  "best_crop": [128, 106, 981, 672],
   "best_score": 4.0,
   "best_action": "place_subject_left_third",
   "main_issue": "subject_too_centered",
@@ -234,12 +237,12 @@ python scripts/enrich_gaic_with_vlm_semantics.py \
     "source": "GAICD",
     "candidate_scores": "human_mos",
     "best_crop_from": "highest_mos_candidate",
-    "coord_mode": "square1024"
+    "coord_mode": "gaic_yxyx"
   }
 }
 ```
 
-注意：`gaic_original_box` 是 GAICD 原始 1024 网格坐标；`box` 是已经映射到真实图像尺寸并裁剪到图像范围内的训练坐标。
+注意：`gaic_original_box` 是 GAICD 原始 `y1,x1,y2,x2` 坐标；`box` 是已经转换后的标准 `x1,y1,x2,y2` 训练坐标。可视化和训练都使用 `box`，不要直接拿 `gaic_original_box` 当 `xyxy` 用。
 
 ## 6. 评估与自检
 
