@@ -1,0 +1,9 @@
+{
+  "input_jsonl": "/dmci_user/mx/workspace/imageCut/GAIC_DACC/inputFile/train.jsonl",
+  "out_jsonl": "/dmci_user/mx/workspace/imageCut/GAIC_DACC/outputFile/train.jsonl",
+  "failed_jsonl": "/dmci_user/mx/workspace/imageCut/GAIC_DACC/outputFile/train.jsonl.failed.jsonl",
+  "vlm": "qwen",
+  "processed": 5,
+  "skipped": 0,
+  "failed": 0
+}
