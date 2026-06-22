@@ -40,8 +40,10 @@ def main() -> None:
     parser.add_argument("--test-ratio", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-records", type=int, default=0, help="Debug/load limit; 0 means all.")
+    parser.add_argument("--progress-interval", type=int, default=500, help="Print CPC loading progress every N annotations; 0 disables progress logs.")
     args = parser.parse_args()
 
+    print(f"[cpc] start conversion cpc_root={args.cpc_root} out_dir={args.out_dir}", file=sys.stderr, flush=True)
     records, load_summary = load_cpc_records(
         args.cpc_root,
         annotation_file=args.annotation_file,
@@ -52,12 +54,16 @@ def main() -> None:
         seed=args.seed,
         clip_boxes=not args.no_clip_boxes,
         max_records=args.max_records,
+        progress_interval=args.progress_interval,
     )
+    print(f"[cpc] loaded records={len(records)}", file=sys.stderr, flush=True)
 
     pairwise_summary: Dict[str, Any] = {"source": "score_derived"}
     if args.pairwise_file:
+        print(f"[cpc] overriding pairwise preferences from {args.pairwise_file}", file=sys.stderr, flush=True)
         records, pairwise_summary = _override_pairwise_from_file(records, args.pairwise_file)
 
+    print("[cpc] splitting and writing JSONL files", file=sys.stderr, flush=True)
     splits = split_records(
         records,
         train_ratio=args.train_ratio,
@@ -92,7 +98,8 @@ def main() -> None:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     write_json(out_dir / "summary.json", summary)
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    print(f"[cpc] done summary={out_dir / 'summary.json'}", file=sys.stderr, flush=True)
+    print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
 
 
 def _override_pairwise_from_file(records: List[CpcImageRecord], pairwise_file: str) -> tuple[List[CpcImageRecord], Dict[str, Any]]:

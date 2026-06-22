@@ -102,6 +102,7 @@ python scripts/cpc_to_dacc_jsonl.py \
   --train-ratio 0.9 \
   --val-ratio 0.1 \
   --test-ratio 0.0 \
+  --progress-interval 500 \
   --min-pair-score-gap 0.02
 ```
 
@@ -123,6 +124,7 @@ python scripts/cpc_to_dacc_jsonl.py \
   --out-dir runs/cpc_debug/metadata \
   --max-records 20 \
   --max-pairs-per-image 64 \
+  --progress-interval 1 \
   --min-pair-score-gap 0.02
 ```
 
@@ -139,7 +141,7 @@ python scripts/cpc_to_dacc_jsonl.py \
 服务器上一键后台转换并生成与 GAIC 一样的可视化：
 
 ```bash
-mkdir -p logs data/cpc_dacc/metadata data/cpc_dacc/visualizations && nohup bash -lc 'set -euo pipefail; python scripts/cpc_to_dacc_jsonl.py --cpc-root /home/mx/ocean_nas/beauty_dataset/CPCDataset --annotation-file CollectedAnnotationsRaw --image-dir images --out-dir data/cpc_dacc/metadata --train-ratio 0.9 --val-ratio 0.1 --test-ratio 0.0 --min-pair-score-gap 0.02 --max-pairs-per-image 128; for split in train val; do python scripts/enrich_dacc_with_vlm_semantics.py --input-jsonl data/cpc_dacc/metadata/${split}.jsonl --out-jsonl data/cpc_dacc/metadata/${split}_vis.jsonl --vlm heuristic --visualize --vis-dir data/cpc_dacc/visualizations/${split} --vis-topk 5 --overwrite; done' > logs/cpc_prepare_with_vis_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+mkdir -p logs data/cpc_dacc/metadata data/cpc_dacc/visualizations && nohup bash -lc 'set -euo pipefail; python -u scripts/cpc_to_dacc_jsonl.py --cpc-root /home/mx/ocean_nas/beauty_dataset/CPCDataset --annotation-file CollectedAnnotationsRaw --image-dir images --out-dir data/cpc_dacc/metadata --train-ratio 0.9 --val-ratio 0.1 --test-ratio 0.0 --min-pair-score-gap 0.02 --max-pairs-per-image 128 --progress-interval 200; for split in train val; do python -u scripts/enrich_dacc_with_vlm_semantics.py --input-jsonl data/cpc_dacc/metadata/${split}.jsonl --out-jsonl data/cpc_dacc/metadata/${split}_vis.jsonl --vlm heuristic --visualize --vis-dir data/cpc_dacc/visualizations/${split} --vis-topk 5 --overwrite; done' > logs/cpc_prepare_with_vis_$(date +%Y%m%d_%H%M%S).log 2>&1 &
 ```
 
 查看日志：
@@ -528,7 +530,8 @@ python scripts/cpc_to_dacc_jsonl.py \
   --image-dir images \
   --out-dir runs/cpc_debug/metadata \
   --max-records 5 \
-  --max-pairs-per-image 16
+  --max-pairs-per-image 16 \
+  --progress-interval 1
 
 python scripts/train_pairwise_ranker.py \
   --config configs/ranker_cpc_pairwise.yaml
@@ -559,6 +562,7 @@ python scripts/cpc_to_dacc_jsonl.py \
   --val-ratio 0.1 \
   --test-ratio 0.0 \
   --max-pairs-per-image 128 \
+  --progress-interval 500 \
   --min-pair-score-gap 0.02
 
 # 3. 低成本中间态测试

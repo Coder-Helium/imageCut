@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 import json
 import random
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -113,6 +115,7 @@ def load_cpc_records(
     seed: int = 42,
     clip_boxes: bool = True,
     max_records: int = 0,
+    progress_interval: int = 500,
 ) -> Tuple[List[CpcImageRecord], Dict[str, Any]]:
     ann_path = find_cpc_annotation_file(cpc_root, annotation_file)
     if ann_path.is_dir():
@@ -127,6 +130,7 @@ def load_cpc_records(
             seed=seed,
             clip_boxes=clip_boxes,
             max_records=max_records,
+            progress_interval=progress_interval,
         )
 
     image_index = build_image_index(cpc_root, image_dir)
@@ -139,7 +143,16 @@ def load_cpc_records(
     skipped: List[Dict[str, Any]] = []
     total_views = 0
     total_pairs = 0
-    for image_name, payload in entries:
+    started_at = time.monotonic()
+    if progress_interval > 0:
+        _log_progress(f"loading annotation_file={ann_path} entries={len(entries)} image_index={len(image_index)}")
+    scanned = 0
+    for scanned, (image_name, payload) in enumerate(entries, start=1):
+        if _progress_due(scanned, progress_interval):
+            _log_progress(
+                f"json scanned={scanned}/{len(entries)} records={len(records)} skipped={len(skipped)} "
+                f"views={total_views} pairs={total_pairs} elapsed={_elapsed(started_at)} current={image_name}"
+            )
         image_path = resolve_image_path(image_name, image_index)
         if image_path is None:
             skipped.append({"image_name": image_name, "reason": "missing_image"})
@@ -184,6 +197,11 @@ def load_cpc_records(
         total_pairs += len(preferences)
         if max_records > 0 and len(records) >= max_records:
             break
+    if progress_interval > 0:
+        _log_progress(
+            f"finished loading records={len(records)} scanned={scanned} skipped={len(skipped)} "
+            f"views={total_views} pairs={total_pairs} elapsed={_elapsed(started_at)}"
+        )
 
     summary = {
         "annotation_file": str(ann_path.resolve()),
@@ -196,6 +214,7 @@ def load_cpc_records(
         "min_pair_score_gap": min_pair_score_gap,
         "max_pairs_per_image": max_pairs_per_image,
         "max_records": max_records,
+        "elapsed_sec": round(time.monotonic() - started_at, 3),
     }
     return records, summary
 
@@ -211,6 +230,7 @@ def load_cpc_collected_raw_records(
     seed: int = 42,
     clip_boxes: bool = True,
     max_records: int = 0,
+    progress_interval: int = 500,
 ) -> Tuple[List[CpcImageRecord], Dict[str, Any]]:
     ann_dir = Path(annotation_dir)
     search_root = Path(image_root) if image_root is not None else _resolve_image_search_root(cpc_root, "")
@@ -220,16 +240,29 @@ def load_cpc_collected_raw_records(
     skipped: List[Dict[str, Any]] = []
     total_views = 0
     total_pairs = 0
+    started_at = time.monotonic()
+    if progress_interval > 0:
+        _log_progress(f"loading CollectedAnnotationsRaw dir={ann_dir} image_root={search_root}")
     if max_records > 0:
         files = (p for p in ann_dir.iterdir() if p.is_file() and p.suffix.lower() == ".txt")
         annotation_files: int | str = "not_counted_debug_limit"
     else:
+        if progress_interval > 0:
+            _log_progress(f"discovering annotation files under {ann_dir}")
         sorted_files = sorted(p for p in ann_dir.iterdir() if p.is_file() and p.suffix.lower() == ".txt")
         files = iter(sorted_files)
         annotation_files = len(sorted_files)
+        if progress_interval > 0:
+            _log_progress(f"found annotation_files={annotation_files}")
     scanned = 0
     for ann_path in files:
         scanned += 1
+        if _progress_due(scanned, progress_interval):
+            total_text = annotation_files if isinstance(annotation_files, int) else "?"
+            _log_progress(
+                f"raw scanned={scanned}/{total_text} records={len(records)} skipped={len(skipped)} "
+                f"views={total_views} pairs={total_pairs} elapsed={_elapsed(started_at)} current={ann_path.name}"
+            )
         image_name = _image_name_from_collected_annotation(ann_path)
         image_path = _resolve_direct_image_path(image_name, search_root)
         if image_path is None:
@@ -288,6 +321,11 @@ def load_cpc_collected_raw_records(
         total_pairs += len(preferences)
         if max_records > 0 and len(records) >= max_records:
             break
+    if progress_interval > 0:
+        _log_progress(
+            f"finished loading records={len(records)} scanned={scanned} skipped={len(skipped)} "
+            f"views={total_views} pairs={total_pairs} elapsed={_elapsed(started_at)}"
+        )
 
     summary = {
         "annotation_file": str(ann_dir.resolve()),
@@ -305,8 +343,21 @@ def load_cpc_collected_raw_records(
         "min_pair_score_gap": min_pair_score_gap,
         "max_pairs_per_image": max_pairs_per_image,
         "max_records": max_records,
+        "elapsed_sec": round(time.monotonic() - started_at, 3),
     }
     return records, summary
+
+
+def _log_progress(message: str) -> None:
+    print(f"[cpc] {message}", file=sys.stderr, flush=True)
+
+
+def _progress_due(step: int, progress_interval: int) -> bool:
+    return progress_interval > 0 and (step == 1 or step % progress_interval == 0)
+
+
+def _elapsed(started_at: float) -> str:
+    return f"{time.monotonic() - started_at:.1f}s"
 
 
 def _image_name_from_collected_annotation(ann_path: Path) -> str:
