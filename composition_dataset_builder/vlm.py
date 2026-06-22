@@ -216,6 +216,108 @@ class OpenAIResponsesVLMProvider(VLMProvider):
         )
 
 
+class LocalQwenTransformersVLMProvider(VLMProvider):
+    """Local Qwen3-VL provider backed by Hugging Face Transformers."""
+
+    def __init__(
+        self,
+        model_path: str,
+        dtype: str = "float16",
+        device_map: str = "auto",
+        attn_implementation: str = "sdpa",
+        max_new_tokens: int = 768,
+        min_pixels: int = 262144,
+        max_pixels: int = 1048576,
+        trust_remote_code: bool = True,
+    ):
+        if not model_path:
+            raise RuntimeError("Local Qwen provider requires --local-qwen-model")
+        self.model_path = _resolve_local_model_path(model_path)
+        self.dtype = dtype
+        self.device_map = device_map
+        self.attn_implementation = attn_implementation
+        self.max_new_tokens = int(max_new_tokens)
+        self.min_pixels = int(min_pixels)
+        self.max_pixels = int(max_pixels)
+        self.trust_remote_code = trust_remote_code
+
+        try:
+            import torch
+            from transformers import AutoProcessor
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                "Local Qwen requires transformers>=4.57.0, accelerate, torch and pillow. "
+                "Install with: pip install -U 'transformers>=4.57.0' accelerate pillow"
+            ) from exc
+        try:
+            from transformers import AutoModelForMultimodalLM as AutoQwenVLModel
+        except Exception:  # noqa: BLE001
+            from transformers import AutoModelForImageTextToText as AutoQwenVLModel
+
+        self.torch = torch
+        load_kwargs: Dict[str, Any] = {
+            "device_map": self.device_map,
+            "trust_remote_code": self.trust_remote_code,
+        }
+        dtype_value = _torch_dtype(dtype, torch)
+        if dtype_value is not None:
+            load_kwargs["dtype"] = dtype_value
+        if attn_implementation and attn_implementation.lower() not in {"none", "default"}:
+            load_kwargs["attn_implementation"] = attn_implementation
+
+        try:
+            self.model = AutoQwenVLModel.from_pretrained(str(self.model_path), **load_kwargs)
+        except TypeError:
+            # Older Transformers releases may still use torch_dtype.
+            if "dtype" in load_kwargs:
+                load_kwargs["torch_dtype"] = load_kwargs.pop("dtype")
+            self.model = AutoQwenVLModel.from_pretrained(str(self.model_path), **load_kwargs)
+        self.model.eval()
+        self.processor = AutoProcessor.from_pretrained(
+            str(self.model_path),
+            trust_remote_code=self.trust_remote_code,
+            min_pixels=self.min_pixels,
+            max_pixels=self.max_pixels,
+        )
+
+    def understand(self, image_path: str, caption: str, semantic_info: Dict[str, Any]) -> Dict[str, Any]:
+        prompt = _build_qwen_prompt(caption, semantic_info)
+        image_uri = Path(image_path).resolve().as_uri()
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "url": image_uri},
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
+        inputs = self.processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt",
+        )
+        inputs = inputs.to(self.model.device)
+        with self.torch.inference_mode():
+            generated_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=self.max_new_tokens,
+                do_sample=False,
+            )
+        generated_ids_trimmed = [
+            out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+        ]
+        output_text = self.processor.batch_decode(
+            generated_ids_trimmed,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )[0]
+        parsed = _parse_json_object(output_text)
+        return _finalize_understanding(parsed, caption, semantic_info, "local_qwen_transformers")
+
+
 def create_vlm_provider(kind: str, precomputed_path: Optional[str] = None, **kwargs: Any) -> VLMProvider:
     kind = (kind or "heuristic").lower()
     if kind in {"none", "heuristic", "fallback"}:
@@ -226,6 +328,8 @@ def create_vlm_provider(kind: str, precomputed_path: Optional[str] = None, **kwa
         return PrecomputedVLMProvider(precomputed_path)
     if kind in {"qwen", "qwen_dashscope", "dashscope"}:
         return QwenDashScopeVLMProvider(**kwargs)
+    if kind in {"local_qwen", "qwen_local", "local_qwen_transformers"}:
+        return LocalQwenTransformersVLMProvider(**kwargs)
     if kind in {"openai", "openai_responses", "responses"}:
         return OpenAIResponsesVLMProvider(**kwargs)
     raise ValueError(f"Unknown VLM provider: {kind}")
@@ -237,6 +341,52 @@ def _image_to_data_url(image_path: str) -> str:
     with open(image_path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode("ascii")
     return f"data:{mime};base64,{b64}"
+
+
+def _resolve_local_model_path(model_path: str) -> str | Path:
+    path = Path(model_path).expanduser()
+    if not path.exists():
+        return model_path
+    if (path / "config.json").exists():
+        return path
+    snapshots_dir = path / "snapshots"
+    if snapshots_dir.exists():
+        ref_main = path / "refs" / "main"
+        if ref_main.exists():
+            snapshot = snapshots_dir / ref_main.read_text(encoding="utf-8").strip()
+            if snapshot.exists():
+                return snapshot
+        snapshots = sorted([p for p in snapshots_dir.iterdir() if p.is_dir()], key=lambda p: p.stat().st_mtime, reverse=True)
+        if snapshots:
+            return snapshots[0]
+    return path
+
+
+def _torch_dtype(dtype: str, torch_module: Any) -> Any:
+    value = (dtype or "auto").lower()
+    if value in {"auto", ""}:
+        return "auto"
+    if value in {"float16", "fp16", "half"}:
+        return torch_module.float16
+    if value in {"bfloat16", "bf16"}:
+        return torch_module.bfloat16
+    if value in {"float32", "fp32"}:
+        return torch_module.float32
+    raise ValueError(f"Unsupported local Qwen dtype: {dtype}")
+
+
+def _parse_json_object(text: str) -> Dict[str, Any]:
+    raw = str(text or "").strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE).strip()
+        raw = re.sub(r"\s*```$", "", raw).strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+        raise
 
 
 def _build_qwen_prompt(caption: str, semantic_info: Dict[str, Any]) -> str:

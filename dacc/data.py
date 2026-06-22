@@ -131,6 +131,79 @@ class CropRankerDataset(Dataset):
         }
 
 
+class PairwiseCropRankerDataset(Dataset):
+    """Pairwise crop preference dataset.
+
+    Each item is one preference edge from ``pairwise_preferences``:
+    winner crop should receive a higher score than loser crop.
+    """
+
+    def __init__(
+        self,
+        jsonl_path: str | Path,
+        image_size: int = 224,
+        crop_size: int = 224,
+        max_records: Optional[int] = None,
+        max_pairs_per_record: Optional[int] = None,
+    ) -> None:
+        self.records = load_jsonl(jsonl_path)
+        if max_records is not None:
+            self.records = self.records[:max_records]
+        self.image_size = image_size
+        self.crop_size = crop_size
+        self.items: List[tuple[int, int]] = []
+        for ridx, rec in enumerate(self.records):
+            pairs = rec.get("pairwise_preferences", []) or []
+            if max_pairs_per_record is not None:
+                pairs = pairs[:max_pairs_per_record]
+            for pidx, _ in enumerate(pairs):
+                self.items.append((ridx, pidx))
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        ridx, pidx = self.items[idx]
+        rec = self.records[ridx]
+        pref = rec["pairwise_preferences"][pidx]
+        candidates = {str(c.get("candidate_id")): c for c in rec.get("candidates", [])}
+        winner = candidates[str(pref["winner"])]
+        loser = candidates[str(pref["loser"])]
+        img = read_image_rgb(rec["image_path"])
+        h, w = img.shape[:2]
+        full_tensor = resize_to_tensor(img, self.image_size)
+        winner_box = winner["box"]
+        loser_box = loser["box"]
+        return {
+            "image": full_tensor,
+            "winner_crop": resize_to_tensor(crop_rgb(img, winner_box), self.crop_size),
+            "loser_crop": resize_to_tensor(crop_rgb(img, loser_box), self.crop_size),
+            "winner_box_feat": _candidate_box_feat(winner, winner_box, w, h),
+            "loser_box_feat": _candidate_box_feat(loser, loser_box, w, h),
+            "weight": torch.tensor(float(pref.get("weight", 1.0)), dtype=torch.float32),
+            "sample_id": rec.get("sample_id", ""),
+            "winner": str(pref["winner"]),
+            "loser": str(pref["loser"]),
+        }
+
+
+def _candidate_box_feat(cand: Dict[str, Any], box: List[int], image_w: int, image_h: int) -> torch.Tensor:
+    norm_box = normalize_xyxy(box, image_w, image_h)
+    return torch.tensor(
+        [
+            norm_box[0],
+            norm_box[1],
+            norm_box[2],
+            norm_box[3],
+            max(0.0, norm_box[2] - norm_box[0]),
+            max(0.0, norm_box[3] - norm_box[1]),
+            float(cand.get("features", {}).get("subject_coverage", 1.0)),
+            float(cand.get("features", {}).get("relation_coverage", 1.0)),
+        ],
+        dtype=torch.float32,
+    )
+
+
 class DACCGeneratorDataset(Dataset):
     """Image-level dataset for top-k crop/action/issue generation."""
 

@@ -39,6 +39,13 @@ class BuilderConfig:
     vlm_precomputed: str = ""
     qwen_model: str = ""
     qwen_base_url: str = ""
+    local_qwen_model: str = ""
+    local_qwen_device_map: str = "auto"
+    local_qwen_dtype: str = "float16"
+    local_qwen_attn: str = "sdpa"
+    local_qwen_max_new_tokens: int = 768
+    local_qwen_min_pixels: int = 262144
+    local_qwen_max_pixels: int = 1048576
     openai_model: str = ""
     openai_base_url: str = ""
     openai_image_detail: str = "auto"
@@ -71,6 +78,16 @@ class DatasetBuilder:
             vlm_kwargs = {
                 "model": config.qwen_model or None,
                 "base_url": config.qwen_base_url or None,
+            }
+        elif config.vlm.lower() in {"local_qwen", "qwen_local", "local_qwen_transformers"}:
+            vlm_kwargs = {
+                "model_path": config.local_qwen_model,
+                "device_map": config.local_qwen_device_map,
+                "dtype": config.local_qwen_dtype,
+                "attn_implementation": config.local_qwen_attn,
+                "max_new_tokens": config.local_qwen_max_new_tokens,
+                "min_pixels": config.local_qwen_min_pixels,
+                "max_pixels": config.local_qwen_max_pixels,
             }
         elif config.vlm.lower() in {"openai", "openai_responses", "responses"}:
             vlm_kwargs = {

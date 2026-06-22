@@ -1,0 +1,27 @@
+seed: 42
+device: auto
+output_dir: runs/cpc_pairwise_ranker
+batch_size: 32
+num_workers: 0
+epochs: 10
+lr: 0.0001
+weight_decay: 0.0001
+
+train_dataset:
+  jsonl_path: data/cpc_dacc/metadata/train.jsonl
+  image_size: 224
+  crop_size: 224
+  max_records:
+  max_pairs_per_record:
+
+val_dataset:
+  jsonl_path: data/cpc_dacc/metadata/val.jsonl
+  image_size: 224
+  crop_size: 224
+  max_records:
+  max_pairs_per_record:
+
+model:
+  width: 48
+  feat_dim: 192
+  box_feat_dim: 8

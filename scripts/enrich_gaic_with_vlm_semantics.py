@@ -22,10 +22,33 @@ def main() -> None:
     parser.add_argument("--input-jsonl", required=True)
     parser.add_argument("--out-jsonl", required=True)
     parser.add_argument("--failed-jsonl", default="")
-    parser.add_argument("--vlm", default="heuristic", choices=["heuristic", "precomputed", "qwen", "qwen_dashscope", "dashscope", "openai", "openai_responses", "responses"])
+    parser.add_argument(
+        "--vlm",
+        default="heuristic",
+        choices=[
+            "heuristic",
+            "precomputed",
+            "qwen",
+            "qwen_dashscope",
+            "dashscope",
+            "local_qwen",
+            "qwen_local",
+            "local_qwen_transformers",
+            "openai",
+            "openai_responses",
+            "responses",
+        ],
+    )
     parser.add_argument("--vlm-precomputed", default="")
     parser.add_argument("--qwen-model", default="")
     parser.add_argument("--qwen-base-url", default="")
+    parser.add_argument("--local-qwen-model", default="", help="Local Qwen3-VL model path or HF cache model directory.")
+    parser.add_argument("--local-qwen-device-map", default="auto", help='Transformers device_map, e.g. "auto".')
+    parser.add_argument("--local-qwen-dtype", default="float16", choices=["auto", "float16", "fp16", "bfloat16", "bf16", "float32", "fp32"])
+    parser.add_argument("--local-qwen-attn", default="sdpa", help='Attention implementation: "sdpa", "flash_attention_2", or "none".')
+    parser.add_argument("--local-qwen-max-new-tokens", type=int, default=768)
+    parser.add_argument("--local-qwen-min-pixels", type=int, default=262144)
+    parser.add_argument("--local-qwen-max-pixels", type=int, default=1048576)
     parser.add_argument("--openai-model", default="")
     parser.add_argument("--openai-base-url", default="")
     parser.add_argument("--openai-image-detail", default="auto")
@@ -172,6 +195,16 @@ def _make_provider(args: argparse.Namespace) -> Any:
             kwargs["model"] = args.qwen_model
         if args.qwen_base_url:
             kwargs["base_url"] = args.qwen_base_url
+    elif args.vlm in {"local_qwen", "qwen_local", "local_qwen_transformers"}:
+        kwargs = {
+            "model_path": args.local_qwen_model,
+            "device_map": args.local_qwen_device_map,
+            "dtype": args.local_qwen_dtype,
+            "attn_implementation": args.local_qwen_attn,
+            "max_new_tokens": args.local_qwen_max_new_tokens,
+            "min_pixels": args.local_qwen_min_pixels,
+            "max_pixels": args.local_qwen_max_pixels,
+        }
     elif args.vlm in {"openai", "openai_responses", "responses"}:
         if args.openai_model:
             kwargs["model"] = args.openai_model

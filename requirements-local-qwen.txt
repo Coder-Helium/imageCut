@@ -1,0 +1,10 @@
+torch>=2.6
+torchvision>=0.21
+transformers>=4.57.0
+accelerate>=1.10
+pillow>=10.0
+opencv-python>=4.8
+numpy>=1.24
+
+# Optional but faster if your CUDA/PyTorch environment supports it:
+# flash-attn
