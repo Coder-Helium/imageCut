@@ -259,6 +259,7 @@ def draw_enrichment_visualization(rec: Dict[str, Any], out_path: str | Path, top
 
     h, w = img.shape[:2]
     candidates = rec.get("candidates", []) or []
+    dataset_label = _dataset_label(rec)
     for idx, cand in enumerate(candidates[: max(0, topk)], start=1):
         box = _box_from_any(cand.get("box"), w, h, normalized=False)
         if box is None:
@@ -267,7 +268,7 @@ def draw_enrichment_visualization(rec: Dict[str, Any], out_path: str | Path, top
         rank = int(cand.get("rank") or idx)
         color = (0, 0, 255) if rank == 1 else (0, 220, 0)
         thickness = 3 if rank == 1 else 1
-        _draw_box(img, box, color, thickness, f"GAIC #{rank} {score:.2f}")
+        _draw_box(img, box, color, thickness, f"{dataset_label} #{rank} {score:.2f}")
 
     understanding = rec.get("vlm_understanding", {}) if isinstance(rec.get("vlm_understanding"), dict) else {}
     _draw_entity_group(img, understanding.get("main_subject"), w, h, (255, 128, 0), "main")
@@ -389,6 +390,16 @@ def _candidate_score(cand: Dict[str, Any]) -> float:
         return float(cand.get("score", 0.0) or 0.0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _dataset_label(rec: Dict[str, Any]) -> str:
+    if rec.get("cpc_supervision"):
+        return "CPC"
+    if rec.get("gaic_supervision"):
+        return "GAIC"
+    sup = rec.get("dataset_supervision", {}) if isinstance(rec.get("dataset_supervision"), dict) else {}
+    source = str(sup.get("source") or rec.get("dataset") or "CROP").strip()
+    return source.upper()[:10] if source else "CROP"
 
 
 def _resolve_vis_dir(out_path: Path, vis_dir: str) -> Path:

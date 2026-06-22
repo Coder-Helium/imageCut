@@ -66,14 +66,26 @@ tar -xzf data/raw/CPCDataset.tar.gz -C data/CPCDataset --strip-components=1
 find data/CPCDataset -maxdepth 3 -type f | sed -n '1,80p'
 ```
 
-常见情况下会有：
+你当前这份 CPC 数据集的实际结构是：
 
 ```text
-image_crop.json
-images/
+CPCDataset/
+  CollectedAnnotationsRaw/
+    xxx.jpg.txt
+  images/
+    xxx.jpg
+  raw_annotations/
+    assignments-*.txt
 ```
 
-如果 `image_crop.json` 不在根目录，转换脚本也会递归寻找；找不到时用 `--annotation-file` 手动指定。
+其中 `CollectedAnnotationsRaw/*.jpg.txt` 是推荐使用的聚合标注。每个文件名去掉最后的 `.txt` 就是图片名；文件内容通常是一个被 JSON 字符串包住的 JSON object，包含：
+
+```text
+bboxes: candidate crop boxes
+scores: 多个 worker 对每个 candidate 的打分/选择结果
+```
+
+转换脚本会优先自动发现 `CollectedAnnotationsRaw/`；如果是另一种整理版本，也兼容常见的 `image_crop.json`。
 
 ---
 
@@ -84,6 +96,8 @@ images/
 ```bash
 python scripts/cpc_to_dacc_jsonl.py \
   --cpc-root data/CPCDataset \
+  --annotation-file CollectedAnnotationsRaw \
+  --image-dir images \
   --out-dir data/cpc_dacc/metadata \
   --train-ratio 0.9 \
   --val-ratio 0.1 \
@@ -104,6 +118,8 @@ data/cpc_dacc/metadata/summary.json
 ```bash
 python scripts/cpc_to_dacc_jsonl.py \
   --cpc-root data/CPCDataset \
+  --annotation-file CollectedAnnotationsRaw \
+  --image-dir images \
   --out-dir runs/cpc_debug/metadata \
   --max-records 20 \
   --max-pairs-per-image 64 \
@@ -115,9 +131,21 @@ python scripts/cpc_to_dacc_jsonl.py \
 ```bash
 python scripts/cpc_to_dacc_jsonl.py \
   --cpc-root data/CPCDataset \
-  --image-dir data/CPCDataset/images \
-  --annotation-file data/CPCDataset/image_crop.json \
+  --image-dir images \
+  --annotation-file CollectedAnnotationsRaw \
   --out-dir data/cpc_dacc/metadata
+```
+
+服务器上一键后台转换并生成与 GAIC 一样的可视化：
+
+```bash
+mkdir -p logs data/cpc_dacc/metadata data/cpc_dacc/visualizations && nohup bash -lc 'set -euo pipefail; python scripts/cpc_to_dacc_jsonl.py --cpc-root /home/mx/ocean_nas/beauty_dataset/CPCDataset --annotation-file CollectedAnnotationsRaw --image-dir images --out-dir data/cpc_dacc/metadata --train-ratio 0.9 --val-ratio 0.1 --test-ratio 0.0 --min-pair-score-gap 0.02 --max-pairs-per-image 128; for split in train val; do python scripts/enrich_dacc_with_vlm_semantics.py --input-jsonl data/cpc_dacc/metadata/${split}.jsonl --out-jsonl data/cpc_dacc/metadata/${split}_vis.jsonl --vlm heuristic --visualize --vis-dir data/cpc_dacc/visualizations/${split} --vis-topk 5 --overwrite; done' > logs/cpc_prepare_with_vis_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+```
+
+查看日志：
+
+```bash
+tail -f logs/cpc_prepare_with_vis_*.log
 ```
 
 ---
@@ -204,7 +232,9 @@ python scripts/cpc_to_dacc_jsonl.py \
 
 ## 6. Pairwise preference 的来源
 
-如果 CPC 解压包里只有 `image_crop.json`，脚本会根据 view score 自动生成 pair：
+如果使用 `CollectedAnnotationsRaw/*.jpg.txt`，脚本会先对每个 candidate crop 的多 worker `scores` 求均值，再在同一张图内按相对高低生成 pair。这个均值只用于排序生成 preference，不建议当成 GAICD 的绝对 MOS。
+
+如果 CPC 解压包里是 `image_crop.json`，脚本同样会根据 view score 自动生成 pair：
 
 ```text
 score(crop_i) > score(crop_j) + min_pair_score_gap
@@ -415,17 +445,24 @@ CPC:
 
 ## 11. 常见问题
 
-### 11.1 找不到 image_crop.json
+### 11.1 找不到标注
 
-使用：
+先确认 raw 聚合标注目录是否存在：
+
+```bash
+find data/CPCDataset -maxdepth 2 -type d -name 'CollectedAnnotationsRaw'
+```
+
+如果使用 JSON 整理版本，再找 JSON：
 
 ```bash
 find data/CPCDataset -name '*.json' -maxdepth 5
 ```
 
-然后指定：
+然后指定对应路径：
 
 ```bash
+--annotation-file CollectedAnnotationsRaw
 --annotation-file /path/to/image_crop.json
 ```
 
@@ -487,6 +524,8 @@ max_pairs_per_record: 128
 ```bash
 python scripts/cpc_to_dacc_jsonl.py \
   --cpc-root data/CPCDataset \
+  --annotation-file CollectedAnnotationsRaw \
+  --image-dir images \
   --out-dir runs/cpc_debug/metadata \
   --max-records 5 \
   --max-pairs-per-image 16
@@ -513,9 +552,13 @@ tar -xzf data/raw/CPCDataset.tar.gz -C data/CPCDataset --strip-components=1
 # 2. 转换
 python scripts/cpc_to_dacc_jsonl.py \
   --cpc-root data/CPCDataset \
+  --annotation-file CollectedAnnotationsRaw \
+  --image-dir images \
   --out-dir data/cpc_dacc/metadata \
   --train-ratio 0.9 \
   --val-ratio 0.1 \
+  --test-ratio 0.0 \
+  --max-pairs-per-image 128 \
   --min-pair-score-gap 0.02
 
 # 3. 低成本中间态测试

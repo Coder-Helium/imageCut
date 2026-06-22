@@ -49,6 +49,15 @@ def find_cpc_annotation_file(cpc_root: str | Path, annotation_file: str | Path =
         return path
 
     root = Path(cpc_root)
+    raw_dirs = [
+        root / "CollectedAnnotationsRaw",
+        root / "collected_annotations_raw",
+        root / "annotations" / "CollectedAnnotationsRaw",
+    ]
+    for path in raw_dirs:
+        if path.exists() and path.is_dir():
+            return path
+
     preferred = [
         root / "image_crop.json",
         root / "annotations" / "image_crop.json",
@@ -64,7 +73,9 @@ def find_cpc_annotation_file(cpc_root: str | Path, annotation_file: str | Path =
         return matches[0]
     jsons = sorted(root.rglob("*.json"), key=lambda p: (len(p.parts), str(p)))
     if not jsons:
-        raise FileNotFoundError(f"No JSON annotation file found under {root}")
+        raise FileNotFoundError(
+            f"No CPC annotation file found under {root}. Expected image_crop.json or CollectedAnnotationsRaw/*.txt."
+        )
     raise FileNotFoundError(
         "Could not find image_crop.json automatically. "
         f"Found JSON files such as {jsons[0]}; pass --annotation-file explicitly."
@@ -101,8 +112,23 @@ def load_cpc_records(
     max_pairs_per_image: int = 0,
     seed: int = 42,
     clip_boxes: bool = True,
+    max_records: int = 0,
 ) -> Tuple[List[CpcImageRecord], Dict[str, Any]]:
     ann_path = find_cpc_annotation_file(cpc_root, annotation_file)
+    if ann_path.is_dir():
+        return load_cpc_collected_raw_records(
+            cpc_root,
+            ann_path,
+            {},
+            image_root=_resolve_image_search_root(cpc_root, image_dir),
+            coord_mode=coord_mode,
+            min_pair_score_gap=min_pair_score_gap,
+            max_pairs_per_image=max_pairs_per_image,
+            seed=seed,
+            clip_boxes=clip_boxes,
+            max_records=max_records,
+        )
+
     image_index = build_image_index(cpc_root, image_dir)
     with open(ann_path, "r", encoding="utf-8") as f:
         raw = json.load(f)
@@ -156,6 +182,8 @@ def load_cpc_records(
         )
         total_views += len(views)
         total_pairs += len(preferences)
+        if max_records > 0 and len(records) >= max_records:
+            break
 
     summary = {
         "annotation_file": str(ann_path.resolve()),
@@ -167,8 +195,192 @@ def load_cpc_records(
         "coord_mode": coord_mode,
         "min_pair_score_gap": min_pair_score_gap,
         "max_pairs_per_image": max_pairs_per_image,
+        "max_records": max_records,
     }
     return records, summary
+
+
+def load_cpc_collected_raw_records(
+    cpc_root: str | Path,
+    annotation_dir: str | Path,
+    image_index: Dict[str, Path],
+    image_root: str | Path | None = None,
+    coord_mode: str = "auto",
+    min_pair_score_gap: float = 0.0,
+    max_pairs_per_image: int = 0,
+    seed: int = 42,
+    clip_boxes: bool = True,
+    max_records: int = 0,
+) -> Tuple[List[CpcImageRecord], Dict[str, Any]]:
+    ann_dir = Path(annotation_dir)
+    search_root = Path(image_root) if image_root is not None else _resolve_image_search_root(cpc_root, "")
+    image_index_built = bool(image_index)
+    rng = random.Random(seed)
+    records: List[CpcImageRecord] = []
+    skipped: List[Dict[str, Any]] = []
+    total_views = 0
+    total_pairs = 0
+    if max_records > 0:
+        files = (p for p in ann_dir.iterdir() if p.is_file() and p.suffix.lower() == ".txt")
+        annotation_files: int | str = "not_counted_debug_limit"
+    else:
+        sorted_files = sorted(p for p in ann_dir.iterdir() if p.is_file() and p.suffix.lower() == ".txt")
+        files = iter(sorted_files)
+        annotation_files = len(sorted_files)
+    scanned = 0
+    for ann_path in files:
+        scanned += 1
+        image_name = _image_name_from_collected_annotation(ann_path)
+        image_path = _resolve_direct_image_path(image_name, search_root)
+        if image_path is None:
+            if not image_index_built:
+                image_index.update(build_image_index(cpc_root, search_root))
+                image_index_built = True
+            image_path = resolve_image_path(image_name, image_index)
+        if image_path is None:
+            skipped.append({"annotation": ann_path.name, "image_name": image_name, "reason": "missing_image"})
+            continue
+        try:
+            payload = _load_maybe_quoted_json(ann_path)
+        except Exception as exc:  # noqa: BLE001
+            skipped.append({"annotation": ann_path.name, "image_name": image_name, "reason": f"bad_json:{repr(exc)}"})
+            continue
+        boxes = payload.get("bboxes", []) if isinstance(payload, dict) else []
+        if not boxes:
+            skipped.append({"annotation": ann_path.name, "image_name": image_name, "reason": "missing_bboxes"})
+            continue
+        image_w, image_h = read_image_size(image_path)
+        raw_scores = _average_worker_scores(payload.get("scores", []), len(boxes))
+        views = build_cpc_views(
+            boxes,
+            raw_scores,
+            image_w,
+            image_h,
+            coord_mode=coord_mode,
+            clip_boxes=clip_boxes,
+        )
+        if len(views) < 2:
+            skipped.append({"annotation": ann_path.name, "image_name": image_name, "reason": "too_few_valid_views"})
+            continue
+        preferences = build_preferences_from_scores(
+            views,
+            min_score_gap=min_pair_score_gap,
+            max_pairs=max_pairs_per_image,
+            rng=rng,
+        )
+        record_payload = {
+            "annotation_file": ann_path.name,
+            "num_workers": len(payload.get("scores", [])) if isinstance(payload.get("scores", []), list) else 0,
+            "raw_format": "CollectedAnnotationsRaw",
+        }
+        sample_id = Path(image_name).stem
+        records.append(
+            CpcImageRecord(
+                sample_id=sample_id,
+                image_name=image_name,
+                image_path=image_path,
+                views=views,
+                preferences=preferences,
+                annotation_payload=record_payload,
+            )
+        )
+        total_views += len(views)
+        total_pairs += len(preferences)
+        if max_records > 0 and len(records) >= max_records:
+            break
+
+    summary = {
+        "annotation_file": str(ann_dir.resolve()),
+        "annotation_format": "CollectedAnnotationsRaw",
+        "annotation_files": annotation_files,
+        "annotation_files_scanned": scanned,
+        "image_root": str(search_root.resolve()),
+        "image_index_size": len(image_index),
+        "records": len(records),
+        "skipped": skipped[:200],
+        "skipped_total": len(skipped),
+        "views": total_views,
+        "pairwise_preferences": total_pairs,
+        "coord_mode": coord_mode,
+        "min_pair_score_gap": min_pair_score_gap,
+        "max_pairs_per_image": max_pairs_per_image,
+        "max_records": max_records,
+    }
+    return records, summary
+
+
+def _image_name_from_collected_annotation(ann_path: Path) -> str:
+    name = ann_path.name
+    return name[:-4] if name.lower().endswith(".txt") else name
+
+
+def _load_maybe_quoted_json(path: Path) -> Any:
+    text = path.read_text(encoding="utf-8").strip()
+    value: Any = json.loads(text)
+    # CPC CollectedAnnotationsRaw files commonly store a JSON object as a
+    # JSON-encoded string, so one extra decoding pass is required.
+    while isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError(f"Empty JSON payload in {path}")
+        value = json.loads(stripped)
+    return value
+
+
+def _average_worker_scores(scores: Any, expected_len: int) -> List[Optional[float]]:
+    buckets: List[List[float]] = [[] for _ in range(expected_len)]
+    if not isinstance(scores, list):
+        return [None for _ in range(expected_len)]
+
+    rows: List[Any]
+    if scores and all(not isinstance(row, (list, tuple, dict)) for row in scores):
+        rows = [scores]
+    else:
+        rows = scores
+
+    for row in rows:
+        if isinstance(row, dict):
+            iterable = []
+            for key, value in row.items():
+                try:
+                    idx = int(key)
+                except (TypeError, ValueError):
+                    continue
+                iterable.append((idx, value))
+        elif isinstance(row, (list, tuple)):
+            iterable = enumerate(row)
+        else:
+            continue
+        for idx, value in iterable:
+            if idx < 0 or idx >= expected_len:
+                continue
+            try:
+                buckets[idx].append(float(value))
+            except (TypeError, ValueError):
+                continue
+
+    return [sum(bucket) / len(bucket) if bucket else None for bucket in buckets]
+
+
+def _resolve_image_search_root(cpc_root: str | Path, image_dir: str | Path = "") -> Path:
+    root = Path(cpc_root)
+    if image_dir:
+        search_root = Path(image_dir)
+        return search_root if search_root.is_absolute() else root / search_root
+    images_dir = root / "images"
+    return images_dir if images_dir.is_dir() else root
+
+
+def _resolve_direct_image_path(image_name: str, image_root: Path) -> Optional[Path]:
+    base = Path(image_name).name
+    names = [image_name, base]
+    if not Path(base).suffix:
+        names.extend(f"{base}{ext}" for ext in IMAGE_EXTS)
+    for name in names:
+        path = image_root / name
+        if path.exists() and path.is_file():
+            return path
+    return None
 
 
 def resolve_image_path(image_name: str, image_index: Dict[str, Path]) -> Optional[Path]:

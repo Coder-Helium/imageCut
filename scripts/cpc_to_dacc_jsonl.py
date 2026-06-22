@@ -24,7 +24,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Convert CPC/Good View Hunting annotations into DACC-style JSONL.")
     parser.add_argument("--cpc-root", required=True, help="CPCDataset root after extracting CPCDataset.tar.gz.")
     parser.add_argument("--out-dir", default="data/cpc_dacc/metadata")
-    parser.add_argument("--annotation-file", default="", help="Path to image_crop.json; auto-detected if omitted.")
+    parser.add_argument("--annotation-file", default="", help="Path to image_crop.json or CollectedAnnotationsRaw directory; auto-detected if omitted.")
     parser.add_argument("--image-dir", default="", help="Image directory; defaults to scanning --cpc-root recursively.")
     parser.add_argument("--pairwise-file", default="", help="Optional raw pairwise file. If omitted, pairs are derived from CPC view scores.")
     parser.add_argument(
@@ -39,7 +39,7 @@ def main() -> None:
     parser.add_argument("--val-ratio", type=float, default=0.1)
     parser.add_argument("--test-ratio", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--max-records", type=int, default=0, help="Debug limit after shuffling; 0 means all.")
+    parser.add_argument("--max-records", type=int, default=0, help="Debug/load limit; 0 means all.")
     args = parser.parse_args()
 
     records, load_summary = load_cpc_records(
@@ -51,6 +51,7 @@ def main() -> None:
         max_pairs_per_image=args.max_pairs_per_image,
         seed=args.seed,
         clip_boxes=not args.no_clip_boxes,
+        max_records=args.max_records,
     )
 
     pairwise_summary: Dict[str, Any] = {"source": "score_derived"}
@@ -63,7 +64,7 @@ def main() -> None:
         val_ratio=args.val_ratio,
         test_ratio=args.test_ratio,
         seed=args.seed,
-        max_records=args.max_records,
+        max_records=0,
     )
     split_summary = write_cpc_splits(args.out_dir, splits, args.cpc_root)
 
