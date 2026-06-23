@@ -264,7 +264,11 @@ class QwenHttpClient:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Benchmark Qwen-VL calls and save visualization outputs.")
-    parser.add_argument("--input-jsonl", default=os.environ.get("INPUT_JSONL", ""), required=not bool(os.environ.get("INPUT_JSONL")))
+    parser.add_argument(
+        "--input-jsonl",
+        default=os.environ.get("INPUT_JSONL", "data/gaic_semantic_qwen/metadata/inputFile/test.jsonl"),
+        help="Input JSONL. Defaults to INPUT_JSONL or data/gaic_semantic_qwen/metadata/inputFile/test.jsonl.",
+    )
     parser.add_argument("--model", default=os.environ.get("QWEN_MODEL", "qwen3-vl-flash"))
     parser.add_argument("--qwen-base-url", default=os.environ.get("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"))
     parser.add_argument("--n", type=int, default=int(os.environ.get("N", "10")))
