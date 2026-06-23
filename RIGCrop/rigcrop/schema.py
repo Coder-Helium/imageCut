@@ -84,12 +84,13 @@ def audit_records(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         middle = _middle_state(rec)
         if middle:
             counters["has_middle_state"] += 1
-        main = middle.get("main_subject") if isinstance(middle, dict) else None
-        if isinstance(main, dict):
+        nodes = _extract_nodes(middle, max_nodes=16, image_w=_rec_image_w(rec), image_h=_rec_image_h(rec)) if isinstance(middle, dict) else []
+        main_nodes = [node for node in nodes if node.get("valid") and node.get("role") == "main_subject"]
+        if main_nodes:
             counters["has_main_subject"] += 1
-            if _entity_bbox_norm(main, _rec_image_w(rec), _rec_image_h(rec)) is not None:
+            if any(node.get("has_box") for node in main_nodes):
                 counters["has_main_subject_bbox"] += 1
-            if _as_float(main.get("importance"), None) is not None:
+            if any(_as_float(node.get("importance"), None) is not None for node in main_nodes):
                 counters["has_main_subject_importance"] += 1
         for key in ["key_objects", "important_background", "distractors"]:
             values = middle.get(key, []) if isinstance(middle, dict) else []
@@ -137,9 +138,22 @@ def _middle_state(rec: Dict[str, Any]) -> Dict[str, Any]:
 def _extract_nodes(middle: Dict[str, Any], max_nodes: int, image_w: int = 0, image_h: int = 0) -> List[Dict[str, Any]]:
     nodes: List[Dict[str, Any]] = []
     main = middle.get("main_subject")
+    key_values = middle.get("key_objects", [])
+    key_entities = [item for item in key_values if isinstance(item, dict)] if isinstance(key_values, list) else []
+    promoted_key_idx: int | None = None
     if isinstance(main, dict):
         nodes.append(_entity_to_node(main, "main_subject", image_w=image_w, image_h=image_h))
-    nodes.extend(_list_to_nodes(middle.get("key_objects", []), "key_object", image_w=image_w, image_h=image_h))
+    elif key_entities:
+        promoted_key_idx = _select_promoted_main_index(key_entities, _text(main), image_w=image_w, image_h=image_h)
+        if promoted_key_idx is not None:
+            promoted = _entity_to_node(key_entities[promoted_key_idx], "main_subject", image_w=image_w, image_h=image_h)
+            promoted["promoted_from"] = "key_objects"
+            nodes.append(promoted)
+    nodes.extend(
+        _entity_to_node(v, "key_object", image_w=image_w, image_h=image_h)
+        for idx, v in enumerate(key_entities)
+        if idx != promoted_key_idx
+    )
     nodes.extend(_list_to_nodes(middle.get("important_background", []), "important_background", image_w=image_w, image_h=image_h))
     nodes.extend(_list_to_nodes(middle.get("distractors", []), "distractor", image_w=image_w, image_h=image_h))
     nodes = sorted(nodes, key=lambda item: (item["role"] != "main_subject", -float(item["importance"])))
@@ -186,6 +200,35 @@ def _entity_to_node(entity: Dict[str, Any], role: str, image_w: int = 0, image_h
         "has_box": bool(has_box),
         "valid": True,
     }
+
+
+def _select_promoted_main_index(key_entities: List[Dict[str, Any]], main_hint: str = "", image_w: int = 0, image_h: int = 0) -> int | None:
+    best_idx: int | None = None
+    best_score = -1e9
+    hint_tokens = _tokens(main_hint)
+    for idx, entity in enumerate(key_entities):
+        score = _as_float(entity.get("importance"), _default_importance("key_object"))
+        if _entity_bbox_norm(entity, image_w=image_w, image_h=image_h) is not None:
+            score += 2.0
+        signature = _node_signature(entity)
+        relation = _text(entity.get("relation_to_subject")).lower()
+        name_tokens = _tokens(entity.get("name")) | _tokens(entity.get("category")) | _tokens(entity.get("description"))
+        if hint_tokens and (hint_tokens & name_tokens):
+            score += 3.0
+        if any(word in relation for word in ["main", "primary", "central focal", "primary focal", "core"]):
+            score += 4.0
+        elif "focal" in relation:
+            score += 2.0
+        elif "subject" in relation:
+            score += 1.0
+        if signature & {"main", "primary", "subject", "focal"}:
+            score += 0.5
+        if any(word in relation for word in ["secondary", "tertiary", "background", "environment"]):
+            score -= 2.5
+        if score > best_score:
+            best_idx = idx
+            best_score = score
+    return best_idx
 
 
 def _build_relations(nodes: List[Dict[str, Any]], middle: Dict[str, Any]) -> Dict[str, Any]:
