@@ -99,7 +99,7 @@ def audit_records(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
             if isinstance(obj, dict) and obj.get("relation_to_subject"):
                 relation_texts[str(obj["relation_to_subject"]).strip().lower()] += 1
         intent = middle.get("composition_intent", {}) if isinstance(middle.get("composition_intent"), dict) else {}
-        for action in intent.get("suggested_actions", []) or []:
+        for action in _text_values(intent.get("suggested_actions", [])):
             action_texts[str(action).strip().lower()] += 1
     total = max(counters["records"], 1)
     return {
@@ -314,7 +314,7 @@ def _subject_position_score(node_box: Sequence[float], crop: Sequence[float]) ->
 
 def _action_targets(middle: Dict[str, Any]) -> Dict[str, Any]:
     intent = middle.get("composition_intent", {}) if isinstance(middle.get("composition_intent"), dict) else {}
-    actions = [str(a).strip() for a in intent.get("suggested_actions", []) or []]
+    actions = [str(a).strip() for a in _text_values(intent.get("suggested_actions", []))]
     multi_hot = [0.0 for _ in ACTIONS]
     unknown: List[str] = []
     for action in actions:
@@ -342,13 +342,43 @@ def _quality_flags(nodes: List[Dict[str, Any]], relations: Dict[str, Any], middl
 
 def _intent_text_set(middle: Dict[str, Any], key: str) -> set[str]:
     intent = middle.get("composition_intent", {}) if isinstance(middle.get("composition_intent"), dict) else {}
-    values = intent.get(key, []) or []
-    if isinstance(values, str):
-        values = [values]
     out: set[str] = set()
-    for value in values:
+    for value in _text_values(intent.get(key, [])):
         out.update(_tokens(value))
     return out
+
+
+def _text_values(value: Any) -> List[str]:
+    """Flatten loose VLM fields into strings.
+
+    Qwen sometimes returns booleans or dictionaries for fields prompted as
+    string arrays. A bare boolean has no text; a keyed boolean dictionary like
+    {"person": true} still exposes "person" as a usable token.
+    """
+    if value is None:
+        return []
+    if isinstance(value, bool):
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, (int, float)):
+        return [str(value)]
+    if isinstance(value, dict):
+        out: List[str] = []
+        for key, item in value.items():
+            if isinstance(item, bool):
+                if item:
+                    out.extend(_text_values(key))
+            else:
+                out.extend(_text_values(item))
+        return out
+    if isinstance(value, (list, tuple, set)):
+        out: List[str] = []
+        for item in value:
+            out.extend(_text_values(item))
+        return out
+    return [str(value)]
 
 
 def _node_signature(node: Dict[str, Any]) -> set[str]:
