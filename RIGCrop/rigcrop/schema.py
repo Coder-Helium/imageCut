@@ -43,7 +43,9 @@ ACTION_TO_ID = {name: idx for idx, name in enumerate(ACTIONS)}
 
 def build_rig_targets(rec: Dict[str, Any], max_nodes: int = 8) -> Dict[str, Any]:
     middle = _middle_state(rec)
-    nodes = _extract_nodes(middle, max_nodes=max_nodes)
+    image_w = int(rec.get("image_width", 0) or 0)
+    image_h = int(rec.get("image_height", 0) or 0)
+    nodes = _extract_nodes(middle, max_nodes=max_nodes, image_w=image_w, image_h=image_h)
     relations = _build_relations(nodes, middle)
     utilities = _candidate_utilities(rec, nodes, relations)
     actions = _action_targets(middle)
@@ -85,7 +87,7 @@ def audit_records(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         main = middle.get("main_subject") if isinstance(middle, dict) else None
         if isinstance(main, dict):
             counters["has_main_subject"] += 1
-            if _valid_bbox(main.get("bbox_norm")):
+            if _entity_bbox_norm(main, _rec_image_w(rec), _rec_image_h(rec)) is not None:
                 counters["has_main_subject_bbox"] += 1
             if _as_float(main.get("importance"), None) is not None:
                 counters["has_main_subject_importance"] += 1
@@ -93,7 +95,7 @@ def audit_records(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
             values = middle.get(key, []) if isinstance(middle, dict) else []
             if isinstance(values, list) and values:
                 counters[f"has_{key}"] += 1
-                if any(isinstance(v, dict) and _valid_bbox(v.get("bbox_norm")) for v in values):
+                if any(isinstance(v, dict) and _entity_bbox_norm(v, _rec_image_w(rec), _rec_image_h(rec)) is not None for v in values):
                     counters[f"has_{key}_bbox"] += 1
         for obj in middle.get("key_objects", []) or []:
             if isinstance(obj, dict) and obj.get("relation_to_subject"):
@@ -132,14 +134,14 @@ def _middle_state(rec: Dict[str, Any]) -> Dict[str, Any]:
     return understanding if isinstance(understanding, dict) else {}
 
 
-def _extract_nodes(middle: Dict[str, Any], max_nodes: int) -> List[Dict[str, Any]]:
+def _extract_nodes(middle: Dict[str, Any], max_nodes: int, image_w: int = 0, image_h: int = 0) -> List[Dict[str, Any]]:
     nodes: List[Dict[str, Any]] = []
     main = middle.get("main_subject")
     if isinstance(main, dict):
-        nodes.append(_entity_to_node(main, "main_subject"))
-    nodes.extend(_list_to_nodes(middle.get("key_objects", []), "key_object"))
-    nodes.extend(_list_to_nodes(middle.get("important_background", []), "important_background"))
-    nodes.extend(_list_to_nodes(middle.get("distractors", []), "distractor"))
+        nodes.append(_entity_to_node(main, "main_subject", image_w=image_w, image_h=image_h))
+    nodes.extend(_list_to_nodes(middle.get("key_objects", []), "key_object", image_w=image_w, image_h=image_h))
+    nodes.extend(_list_to_nodes(middle.get("important_background", []), "important_background", image_w=image_w, image_h=image_h))
+    nodes.extend(_list_to_nodes(middle.get("distractors", []), "distractor", image_w=image_w, image_h=image_h))
     nodes = sorted(nodes, key=lambda item: (item["role"] != "main_subject", -float(item["importance"])))
     nodes = nodes[:max_nodes]
     for idx, node in enumerate(nodes):
@@ -162,15 +164,15 @@ def _extract_nodes(middle: Dict[str, Any], max_nodes: int) -> List[Dict[str, Any
     return nodes
 
 
-def _list_to_nodes(values: Any, role: str) -> List[Dict[str, Any]]:
+def _list_to_nodes(values: Any, role: str, image_w: int = 0, image_h: int = 0) -> List[Dict[str, Any]]:
     if not isinstance(values, list):
         return []
-    return [_entity_to_node(v, role) for v in values if isinstance(v, dict)]
+    return [_entity_to_node(v, role, image_w=image_w, image_h=image_h) for v in values if isinstance(v, dict)]
 
 
-def _entity_to_node(entity: Dict[str, Any], role: str) -> Dict[str, Any]:
-    bbox = entity.get("bbox_norm")
-    has_box = _valid_bbox(bbox)
+def _entity_to_node(entity: Dict[str, Any], role: str, image_w: int = 0, image_h: int = 0) -> Dict[str, Any]:
+    bbox = _entity_bbox_norm(entity, image_w=image_w, image_h=image_h)
+    has_box = bbox is not None
     return {
         "node_id": -1,
         "role": role,
@@ -180,7 +182,7 @@ def _entity_to_node(entity: Dict[str, Any], role: str) -> Dict[str, Any]:
         "description": _text(entity.get("description")),
         "relation_to_subject": _text(entity.get("relation_to_subject")),
         "importance": _as_float(entity.get("importance"), _default_importance(role)),
-        "bbox_norm": clip_box(bbox) if has_box else [0.0, 0.0, 0.0, 0.0],
+        "bbox_norm": bbox if has_box else [0.0, 0.0, 0.0, 0.0],
         "has_box": bool(has_box),
         "valid": True,
     }
@@ -417,6 +419,53 @@ def _valid_bbox(value: Any) -> bool:
     except (TypeError, ValueError):
         return False
     return valid_box(box, min_size=1e-4)
+
+
+def _entity_bbox_norm(entity: Dict[str, Any], image_w: int = 0, image_h: int = 0) -> List[float] | None:
+    for key in ["bbox_norm", "bbox", "box", "bbox_xyxy"]:
+        if key not in entity:
+            continue
+        box = _box_to_norm(entity.get(key), normalized_hint=(key == "bbox_norm"), image_w=image_w, image_h=image_h)
+        if box is not None:
+            return box
+    return None
+
+
+def _box_to_norm(value: Any, normalized_hint: bool, image_w: int = 0, image_h: int = 0) -> List[float] | None:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)) or len(value) < 4:
+        return None
+    try:
+        vals = [float(v) for v in value[:4]]
+    except (TypeError, ValueError):
+        return None
+    if any(math.isnan(v) or math.isinf(v) for v in vals):
+        return None
+
+    if vals[2] <= vals[0] or vals[3] <= vals[1]:
+        vals[2] = vals[0] + max(0.0, vals[2])
+        vals[3] = vals[1] + max(0.0, vals[3])
+
+    max_val = max(vals)
+    min_val = min(vals)
+    if normalized_hint and 1.5 < max_val <= 1000.0 and min_val >= 0.0:
+        vals = [v / 1000.0 for v in vals]
+    elif 0.0 <= min_val and max_val <= 1.5:
+        pass
+    elif image_w > 0 and image_h > 0:
+        vals = [vals[0] / image_w, vals[1] / image_h, vals[2] / image_w, vals[3] / image_h]
+    else:
+        return None
+
+    box = clip_box(vals)
+    return box if valid_box(box, min_size=1e-4) else None
+
+
+def _rec_image_w(rec: Dict[str, Any]) -> int:
+    return int(rec.get("image_width", 0) or rec.get("width", 0) or 0)
+
+
+def _rec_image_h(rec: Dict[str, Any]) -> int:
+    return int(rec.get("image_height", 0) or rec.get("height", 0) or 0)
 
 
 def _as_float(value: Any, default: float | None = 0.0) -> float:
