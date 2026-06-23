@@ -1,0 +1,41 @@
+seed: 42
+device: auto
+output_dir: RIGCrop/runs/smoke_rig_crop
+
+batch_size: 2
+num_workers: 0
+epochs: 1
+lr: 0.0003
+weight_decay: 0.0001
+
+train_dataset:
+  jsonl_path: RIGCrop/runs/smoke_data/train_rig.jsonl
+  image_size: 128
+  crop_size: 96
+  max_records:
+  max_pairs_per_record: 8
+  max_nodes: 8
+  derive_pairs_from_scores: true
+
+val_dataset:
+  jsonl_path: RIGCrop/runs/smoke_data/val_rig.jsonl
+  image_size: 128
+  crop_size: 96
+  max_records:
+  max_pairs_per_record: 8
+  max_nodes: 8
+  derive_pairs_from_scores: true
+
+model:
+  width: 16
+  feat_dim: 64
+  graph_dim: 48
+  max_nodes: 8
+  box_feat_dim: 8
+
+loss:
+  crop_pair: 1.0
+  node: 0.2
+  relation: 0.1
+  utility: 0.2
+  action: 0.02

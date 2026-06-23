@@ -1,0 +1,41 @@
+seed: 42
+device: auto
+output_dir: RIGCrop/runs/ablations/cpc_crop_only
+
+batch_size: 16
+num_workers: 4
+epochs: 30
+lr: 0.0001
+weight_decay: 0.0001
+
+train_dataset:
+  jsonl_path: data/cpc_rig/metadata/train.jsonl
+  image_size: 384
+  crop_size: 224
+  max_records:
+  max_pairs_per_record: 128
+  max_nodes: 8
+  derive_pairs_from_scores: true
+
+val_dataset:
+  jsonl_path: data/cpc_rig/metadata/val.jsonl
+  image_size: 384
+  crop_size: 224
+  max_records:
+  max_pairs_per_record: 128
+  max_nodes: 8
+  derive_pairs_from_scores: true
+
+model:
+  width: 48
+  feat_dim: 192
+  graph_dim: 128
+  max_nodes: 8
+  box_feat_dim: 8
+
+loss:
+  crop_pair: 1.0
+  node: 0.0
+  relation: 0.0
+  utility: 0.0
+  action: 0.0
