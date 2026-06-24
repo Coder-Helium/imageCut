@@ -48,4 +48,5 @@ loss:
   node: 0.2
   relation: 0.1
   utility: 0.2
+  query: 0.05
   action: 0.02

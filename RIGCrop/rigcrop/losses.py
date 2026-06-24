@@ -65,3 +65,29 @@ def utility_distillation_loss(winner_utility: torch.Tensor, loser_utility: torch
     sign = torch.where(teacher_margin >= 0, 1.0, -1.0)
     pair = F.softplus(-sign * (winner_utility - loser_utility))
     return smooth + (pair * mask).sum() / mask.sum().clamp(min=1.0)
+
+
+def query_proposal_loss(out: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+    if "query_boxes" not in out or "query_scores" not in out:
+        return out["score"].new_zeros(())
+    target_boxes = batch["winner_box_feat"][:, :4]
+    query_boxes = out["query_boxes"]
+    query_scores = out["query_scores"]
+    expanded_targets = target_boxes[:, None, :].expand_as(query_boxes)
+    l1 = F.smooth_l1_loss(query_boxes, expanded_targets, reduction="none").sum(dim=-1)
+    best_l1 = l1.min(dim=1).values.mean()
+    iou_targets = _box_iou_with_target(query_boxes, target_boxes).detach()
+    score_loss = F.binary_cross_entropy(query_scores.clamp(1e-4, 1.0 - 1e-4), iou_targets, reduction="mean")
+    return best_l1 + score_loss
+
+
+def _box_iou_with_target(boxes: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    target = target[:, None, :]
+    x1 = torch.maximum(boxes[..., 0], target[..., 0])
+    y1 = torch.maximum(boxes[..., 1], target[..., 1])
+    x2 = torch.minimum(boxes[..., 2], target[..., 2])
+    y2 = torch.minimum(boxes[..., 3], target[..., 3])
+    inter = (x2 - x1).clamp(min=0.0) * (y2 - y1).clamp(min=0.0)
+    box_area = (boxes[..., 2] - boxes[..., 0]).clamp(min=0.0) * (boxes[..., 3] - boxes[..., 1]).clamp(min=0.0)
+    target_area = (target[..., 2] - target[..., 0]).clamp(min=0.0) * (target[..., 3] - target[..., 1]).clamp(min=0.0)
+    return inter / (box_area + target_area - inter).clamp(min=1e-6)

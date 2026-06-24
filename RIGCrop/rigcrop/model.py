@@ -142,10 +142,15 @@ class RIGCropModel(nn.Module):
     def forward(
         self,
         image: torch.Tensor,
-        crop: torch.Tensor,
-        box_feat: torch.Tensor,
+        crop: torch.Tensor | None = None,
+        box_feat: torch.Tensor | None = None,
         graph: dict[str, torch.Tensor] | None = None,
+        encode_only: bool = False,
     ) -> dict[str, torch.Tensor]:
+        if encode_only:
+            return self.encode_graph(image)
+        if crop is None or box_feat is None:
+            raise ValueError("crop and box_feat are required unless encode_only=True")
         if graph is None:
             graph = self.encode_graph(image)
         crop_visual = self.backbone(crop)

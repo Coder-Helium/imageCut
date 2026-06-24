@@ -15,7 +15,7 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import ConcatDataset, DataLoader, DistributedSampler
 
 from rigcrop.data import RIGPairwiseDataset  # noqa: E402
-from rigcrop.losses import graph_supervision_loss, pairwise_crop_loss, utility_distillation_loss  # noqa: E402
+from rigcrop.losses import graph_supervision_loss, pairwise_crop_loss, query_proposal_loss, utility_distillation_loss  # noqa: E402
 from rigcrop.model import RIGCropModel  # noqa: E402
 from rigcrop.runtime import AverageMeter, get_device, load_config, save_checkpoint, set_seed, write_json  # noqa: E402
 
@@ -56,7 +56,11 @@ def main() -> None:
 
     model = RIGCropModel(**cfg.get("model", {})).to(device)
     if distributed:
-        model = DistributedDataParallel(model, device_ids=[_local_rank()] if device.type == "cuda" else None)
+        model = DistributedDataParallel(
+            model,
+            device_ids=[_local_rank()] if device.type == "cuda" else None,
+            find_unused_parameters=True,
+        )
     optimizer = torch.optim.AdamW(model.parameters(), lr=float(cfg.get("lr", 1e-4)), weight_decay=float(cfg.get("weight_decay", 1e-4)))
     loss_weights = cfg.get("loss", {})
     best_acc = -1.0
@@ -126,6 +130,7 @@ def _losses(winner: Dict[str, torch.Tensor], loser: Dict[str, torch.Tensor], bat
     crop = pairwise_crop_loss(winner["score"], loser["score"], batch["weight"])
     graph_items = graph_supervision_loss(winner, batch)
     utility = utility_distillation_loss(winner["utility"], loser["utility"], batch["winner_utility"], batch["loser_utility"])
+    query = query_proposal_loss(winner, batch)
     node = graph_items["node_bbox"] + graph_items["node_role"] + graph_items["node_importance"] + graph_items["node_valid"]
     relation = graph_items["relation_policy"] + graph_items["relation_weight"]
     action = graph_items["action"]
@@ -146,9 +151,10 @@ def _losses(winner: Dict[str, torch.Tensor], loser: Dict[str, torch.Tensor], bat
         + node_weighted
         + relation_weighted
         + float(weights.get("utility", 0.3)) * utility
+        + float(weights.get("query", 0.1)) * query
         + float(weights.get("action", 0.05)) * action
     )
-    return {"total": total, "crop": crop, "node": node, "relation": relation, "utility": utility, "action": action}
+    return {"total": total, "crop": crop, "node": node, "relation": relation, "utility": utility, "query": query, "action": action}
 
 
 def _to_device(batch: Dict[str, Any], device: torch.device) -> Dict[str, Any]:
@@ -159,7 +165,7 @@ def _to_device(batch: Dict[str, Any], device: torch.device) -> Dict[str, Any]:
 
 
 def _meters() -> Dict[str, AverageMeter]:
-    return {name: AverageMeter() for name in ["loss", "crop_loss", "node_loss", "relation_loss", "utility_loss", "action_loss", "pairwise_acc", "score_margin"]}
+    return {name: AverageMeter() for name in ["loss", "crop_loss", "node_loss", "relation_loss", "utility_loss", "query_loss", "action_loss", "pairwise_acc", "score_margin"]}
 
 
 def _update_meters(meters: Dict[str, AverageMeter], losses: Dict[str, torch.Tensor], margin: torch.Tensor, n: int) -> None:
@@ -168,6 +174,7 @@ def _update_meters(meters: Dict[str, AverageMeter], losses: Dict[str, torch.Tens
     meters["node_loss"].update(float(losses["node"].detach().cpu()), n)
     meters["relation_loss"].update(float(losses["relation"].detach().cpu()), n)
     meters["utility_loss"].update(float(losses["utility"].detach().cpu()), n)
+    meters["query_loss"].update(float(losses["query"].detach().cpu()), n)
     meters["action_loss"].update(float(losses["action"].detach().cpu()), n)
     meters["pairwise_acc"].update(float((margin > 0).float().mean().detach().cpu()), n)
     meters["score_margin"].update(float(margin.mean().detach().cpu()), n)
@@ -207,7 +214,9 @@ def _unwrap(model):
 
 
 def _encode_graph(model, image: torch.Tensor) -> Dict[str, torch.Tensor]:
-    return _unwrap(model).encode_graph(image)
+    if hasattr(model, "module"):
+        return model(image, encode_only=True)
+    return model.encode_graph(image)
 
 
 def _reduce_logs(logs: Dict[str, float]) -> Dict[str, float]:
