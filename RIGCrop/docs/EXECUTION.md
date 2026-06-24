@@ -199,11 +199,26 @@ batch_size 是每张 GPU 的 batch size。
 如果显存富余，可以把 batch_size 从 16 提到 24/32。
 ```
 
+训练脚本每个 epoch 结束会在 `output_dir` 下刷新曲线：
+
+```text
+history.json
+training_curves.png
+loss.png
+pairwise_acc.png
+score_margin.png
+node_loss.png
+relation_loss.png
+utility_loss.png
+query_loss.png
+action_loss.png
+```
+
 等价命令：
 
 ```bash
 mkdir -p RIGCrop/logs
-nohup bash -lc 'set -euo pipefail; torchrun --standalone --nproc_per_node=4 RIGCrop/scripts/train_rig_crop.py --config RIGCrop/configs/rig_crop_cpc_joint.yaml' \
+nohup bash -lc 'set -euo pipefail; torchrun --nproc_per_node=4 --master_addr=127.0.0.1 --master_port=29501 RIGCrop/scripts/train_rig_crop.py --config RIGCrop/configs/rig_crop_cpc_joint.yaml' \
   > RIGCrop/logs/rig_crop_train_$(date +%Y%m%d_%H%M%S).log 2>&1 &
 ```
 

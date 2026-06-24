@@ -89,6 +89,7 @@ def main() -> None:
             save_checkpoint(out_dir / "last.pt", _unwrap(model), optimizer, epoch, metrics, cfg)
             history.append(metrics)
             write_json(out_dir / "history.json", history)
+            _plot_history(history, out_dir)
             print(metrics, flush=True)
         if distributed:
             dist.barrier()
@@ -225,6 +226,72 @@ def _reduce_logs(logs: Dict[str, float]) -> Dict[str, float]:
     dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
     tensor /= max(_world_size(), 1)
     return {key: float(value) for key, value in zip(keys, tensor.detach().cpu().tolist())}
+
+
+def _plot_history(history: list[Dict[str, float]], out_dir: Path) -> None:
+    if not history:
+        return
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:  # noqa: BLE001
+        if not getattr(_plot_history, "_warned", False):
+            print(f"[rig-plot] skip plotting because matplotlib is unavailable: {exc}", flush=True)
+            setattr(_plot_history, "_warned", True)
+        return
+
+    epochs = [int(item["epoch"]) for item in history]
+    curves = [
+        ("loss", "train_loss", "val_loss"),
+        ("pairwise_acc", "train_pairwise_acc", "val_pairwise_acc"),
+        ("score_margin", "train_score_margin", "val_score_margin"),
+        ("node_loss", "train_node_loss", "val_node_loss"),
+        ("relation_loss", "train_relation_loss", "val_relation_loss"),
+        ("utility_loss", "train_utility_loss", "val_utility_loss"),
+        ("query_loss", "train_query_loss", "val_query_loss"),
+        ("action_loss", "train_action_loss", "val_action_loss"),
+    ]
+    available = [
+        (name, train_key, val_key)
+        for name, train_key, val_key in curves
+        if train_key in history[-1] or val_key in history[-1]
+    ]
+    if not available:
+        return
+
+    rows = (len(available) + 1) // 2
+    fig, axes = plt.subplots(rows, 2, figsize=(14, max(4, rows * 3.2)), squeeze=False)
+    for ax in axes.ravel():
+        ax.axis("off")
+    for ax, (name, train_key, val_key) in zip(axes.ravel(), available):
+        ax.axis("on")
+        if train_key in history[-1]:
+            ax.plot(epochs, [float(item.get(train_key, float("nan"))) for item in history], label="train")
+        if val_key in history[-1]:
+            ax.plot(epochs, [float(item.get(val_key, float("nan"))) for item in history], label="val")
+        ax.set_title(name)
+        ax.set_xlabel("epoch")
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+    fig.tight_layout()
+    fig.savefig(out_dir / "training_curves.png", dpi=180)
+    plt.close(fig)
+
+    for name, train_key, val_key in available:
+        fig, ax = plt.subplots(figsize=(7, 4))
+        if train_key in history[-1]:
+            ax.plot(epochs, [float(item.get(train_key, float("nan"))) for item in history], label="train")
+        if val_key in history[-1]:
+            ax.plot(epochs, [float(item.get(val_key, float("nan"))) for item in history], label="val")
+        ax.set_title(name)
+        ax.set_xlabel("epoch")
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(out_dir / f"{name}.png", dpi=180)
+        plt.close(fig)
 
 
 if __name__ == "__main__":
