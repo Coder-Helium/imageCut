@@ -45,7 +45,7 @@ model:
     source: local
     name: dinov3_vitb16
     pretrained: true
-    weights: /home/mx/DINOv3/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth
+    weights: /home/mx/dinov3/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth
   num_entity_layers: 6
   num_crop_layers: 3
   num_crop_queries: 16
