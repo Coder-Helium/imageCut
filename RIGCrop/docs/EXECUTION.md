@@ -1,9 +1,45 @@
-# RIGCrop 执行文档
+# RIGCrop / RIGFormer 执行文档
 
 所有命令默认在 repo 根目录执行：
 
 ```bash
 cd ~/workspace/imageCut
+```
+
+生产主模型已经重构为 RIGFormer。服务器建议安装：
+
+```bash
+pip install -r requirements-rigformer.txt
+```
+
+如果 DINOv3 权重已提前下载，把 `RIGCrop/configs/*.yaml` 里的：
+
+```yaml
+model:
+  backbone:
+    name: facebook/dinov3-vitb16-pretrain-lvd1689m
+```
+
+改为服务器本地权重目录：
+
+```yaml
+model:
+  backbone:
+    name: /path/to/local/dinov3-vitb16
+```
+
+如果你下载的是官方单文件 `.pth`，不要用 `dinov3_hf`，使用
+`torchhub_dinov3`。需要本地 DINOv3 官方代码仓库和权重文件：
+
+```yaml
+model:
+  backbone:
+    type: torchhub_dinov3
+    repo: /home/mx/dinov3
+    source: local
+    name: dinov3_vitb16
+    pretrained: true
+    weights: /home/mx/DINOv3/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth
 ```
 
 ## 1. Smoke Test
@@ -121,14 +157,14 @@ bash RIGCrop/scripts/prepare_rig_targets.sh \
 python RIGCrop/scripts/build_middle_state_targets.py \
   --input-jsonl data/cpc_semantic_qwen/metadata/train.jsonl \
   --out-jsonl data/cpc_rig/metadata/train.jsonl \
-  --max-nodes 8 \
+  --max-nodes 12 \
   --progress-interval 200 \
   --overwrite
 
 python RIGCrop/scripts/build_middle_state_targets.py \
   --input-jsonl data/cpc_semantic_qwen/metadata/val.jsonl \
   --out-jsonl data/cpc_rig/metadata/val.jsonl \
-  --max-nodes 8 \
+  --max-nodes 12 \
   --progress-interval 200 \
   --overwrite
 ```
@@ -245,7 +281,7 @@ data/gaic_rig/metadata/train.jsonl
 
 ```bash
 bash RIGCrop/scripts/run_server_4gpu.sh \
-  RIGCrop/configs/rig_crop_cpc_gaic_joint.yaml
+  RIGCrop/configs/rig_crop_cpc_gaic_dinov3_pth.yaml
 ```
 
 注意：

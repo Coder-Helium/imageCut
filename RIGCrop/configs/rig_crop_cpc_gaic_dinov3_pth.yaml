@@ -1,8 +1,9 @@
 seed: 42
 device: auto
-output_dir: RIGCrop/runs/rig_crop_cpc_gaic_joint
+output_dir: RIGCrop/runs/rig_crop_cpc_gaic_dinov3_pth
 
-batch_size: 16
+# DDP uses this as per-process batch size. Start conservatively for DINOv3-B.
+batch_size: 4
 num_workers: 4
 epochs: 30
 lr: 0.0001
@@ -23,6 +24,7 @@ train_datasets:
     max_pairs_per_record: 128
     max_nodes: 12
     derive_pairs_from_scores: true
+    min_score_gap: 0.05
 
 val_dataset:
   jsonl_path: data/cpc_rig/metadata/val.jsonl
@@ -38,11 +40,12 @@ model:
   max_nodes: 12
   box_feat_dim: 8
   backbone:
-    type: dinov3_hf
-    # Replace with your server-local DINOv3 directory when weights are downloaded.
-    name: facebook/dinov3-vitb16-pretrain-lvd1689m
+    type: torchhub_dinov3
+    repo: /home/mx/dinov3
+    source: local
+    name: dinov3_vitb16
     pretrained: true
-    trust_remote_code: true
+    weights: /home/mx/DINOv3/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth
   num_entity_layers: 6
   num_crop_layers: 3
   num_crop_queries: 16

@@ -97,8 +97,9 @@ def run_epoch(model: RIGCropModel, loader: DataLoader, optimizer: torch.optim.Op
     meters = _meters()
     for batch in loader:
         batch = _to_device(batch, device)
-        winner = model(batch["image"], batch["winner_crop"], batch["winner_box_feat"])
-        loser = model(batch["image"], batch["loser_crop"], batch["loser_box_feat"])
+        graph = _encode_graph(model, batch["image"])
+        winner = model(batch["image"], batch["winner_crop"], batch["winner_box_feat"], graph=graph)
+        loser = model(batch["image"], batch["loser_crop"], batch["loser_box_feat"], graph=graph)
         losses = _losses(winner, loser, batch, loss_weights)
         optimizer.zero_grad(set_to_none=True)
         losses["total"].backward()
@@ -113,8 +114,9 @@ def run_eval(model: RIGCropModel, loader: DataLoader, device: torch.device, loss
     meters = _meters()
     for batch in loader:
         batch = _to_device(batch, device)
-        winner = model(batch["image"], batch["winner_crop"], batch["winner_box_feat"])
-        loser = model(batch["image"], batch["loser_crop"], batch["loser_box_feat"])
+        graph = _encode_graph(model, batch["image"])
+        winner = model(batch["image"], batch["winner_crop"], batch["winner_box_feat"], graph=graph)
+        loser = model(batch["image"], batch["loser_crop"], batch["loser_box_feat"], graph=graph)
         losses = _losses(winner, loser, batch, loss_weights)
         _update_meters(meters, losses, winner["score"] - loser["score"], batch["image"].size(0))
     return {key: meter.avg for key, meter in meters.items()}
@@ -202,6 +204,10 @@ def _world_size() -> int:
 
 def _unwrap(model):
     return model.module if hasattr(model, "module") else model
+
+
+def _encode_graph(model, image: torch.Tensor) -> Dict[str, torch.Tensor]:
+    return _unwrap(model).encode_graph(image)
 
 
 def _reduce_logs(logs: Dict[str, float]) -> Dict[str, float]:

@@ -3,7 +3,7 @@ set -euo pipefail
 
 INPUT_DIR="${1:-data/cpc_semantic_qwen/metadata}"
 OUT_DIR="${2:-data/cpc_rig/metadata}"
-MAX_NODES="${MAX_NODES:-8}"
+MAX_NODES="${MAX_NODES:-12}"
 PROGRESS_INTERVAL="${PROGRESS_INTERVAL:-200}"
 
 mkdir -p "${OUT_DIR}"

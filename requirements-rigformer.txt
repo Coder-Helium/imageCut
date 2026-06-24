@@ -1,0 +1,12 @@
+torch>=2.6
+torchvision>=0.21
+opencv-python>=4.8
+numpy>=1.24
+PyYAML>=6.0
+scipy>=1.10
+
+# Optional production backbones. Install at least one of these on the server
+# when using DINOv3 / foundation-backbone configs.
+transformers>=4.57.0
+accelerate>=1.10
+timm>=1.0.20

@@ -16,7 +16,7 @@ def main() -> None:
     parser.add_argument("--input-jsonl", required=True, help="DACC-style JSONL enriched by Qwen/VLM.")
     parser.add_argument("--out-jsonl", required=True, help="Output JSONL with added rig_targets.")
     parser.add_argument("--summary-json", default="", help="Optional summary path. Defaults to OUT.summary.json.")
-    parser.add_argument("--max-nodes", type=int, default=8)
+    parser.add_argument("--max-nodes", type=int, default=12)
     parser.add_argument("--max-records", type=int, default=0)
     parser.add_argument("--progress-interval", type=int, default=200)
     parser.add_argument("--overwrite", action="store_true")

@@ -141,7 +141,7 @@ rig_targets
 
 ### nodes
 
-固定 padding 到 `max_nodes`，默认 8：
+固定 padding 到 `max_nodes`。RIGFormer 生产默认是 12；smoke test 可显式使用 8：
 
 ```text
 role: main_subject | key_object | important_background | distractor | padding

@@ -28,10 +28,20 @@ val_dataset:
 
 model:
   width: 16
-  feat_dim: 64
-  graph_dim: 48
+  d_model: 48
   max_nodes: 8
   box_feat_dim: 8
+  backbone:
+    type: compact_vit
+    width: 16
+    patch_size: 16
+    depth: 1
+    num_heads: 4
+  num_entity_layers: 1
+  num_crop_layers: 1
+  num_crop_queries: 2
+  nhead: 4
+  dropout: 0.0
 
 loss:
   crop_pair: 1.0

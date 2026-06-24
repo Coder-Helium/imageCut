@@ -14,7 +14,7 @@ train_dataset:
   crop_size: 224
   max_records:
   max_pairs_per_record: 128
-  max_nodes: 8
+  max_nodes: 12
   derive_pairs_from_scores: true
 
 val_dataset:
@@ -23,15 +23,23 @@ val_dataset:
   crop_size: 224
   max_records:
   max_pairs_per_record: 128
-  max_nodes: 8
+  max_nodes: 12
   derive_pairs_from_scores: true
 
 model:
-  width: 48
-  feat_dim: 192
-  graph_dim: 128
-  max_nodes: 8
+  d_model: 384
+  max_nodes: 12
   box_feat_dim: 8
+  backbone:
+    type: dinov3_hf
+    name: facebook/dinov3-vitb16-pretrain-lvd1689m
+    pretrained: true
+    trust_remote_code: true
+  num_entity_layers: 6
+  num_crop_layers: 3
+  num_crop_queries: 16
+  nhead: 8
+  dropout: 0.1
 
 loss:
   crop_pair: 1.0

@@ -12,7 +12,7 @@ import cv2
 import torch
 
 from rigcrop.anchors import generate_anchors  # noqa: E402
-from rigcrop.box_ops import candidate_box_features, normalize_xyxy  # noqa: E402
+from rigcrop.box_ops import candidate_box_features, denormalize_xyxy, normalize_xyxy  # noqa: E402
 from rigcrop.image_io import crop_rgb, draw_boxes, read_image_rgb, resize_to_tensor  # noqa: E402
 from rigcrop.model import RIGCropModel  # noqa: E402
 from rigcrop.runtime import get_device, load_checkpoint, load_config  # noqa: E402
@@ -39,17 +39,20 @@ def main() -> None:
 
     img = read_image_rgb(args.image)
     h, w = img.shape[:2]
-    anchors = generate_anchors(w, h)
     image_tensor = resize_to_tensor(img, args.image_size).unsqueeze(0).to(device)
     results = []
     with torch.no_grad():
         graph = model.encode_graph(image_tensor)
+        anchors = generate_anchors(w, h)
+        if "query_boxes" in graph:
+            query_boxes = graph["query_boxes"][0].detach().cpu().tolist()
+            anchors = _merge_boxes(anchors, [denormalize_xyxy(box, w, h) for box in query_boxes], w, h)
         for start in range(0, len(anchors), args.batch_size):
             batch_boxes = anchors[start : start + args.batch_size]
             crops = torch.stack([resize_to_tensor(crop_rgb(img, box), args.crop_size) for box in batch_boxes]).to(device)
             box_feat = torch.tensor([candidate_box_features(normalize_xyxy(box, w, h)) for box in batch_boxes], dtype=torch.float32, device=device)
             image_batch = image_tensor.expand(len(batch_boxes), -1, -1, -1)
-            graph_batch = {key: value.expand(len(batch_boxes), *value.shape[1:]) if torch.is_tensor(value) and value.size(0) == 1 else value for key, value in graph.items()}
+            graph_batch = _expand_scoring_graph(graph, len(batch_boxes))
             out = model(image_batch, crops, box_feat, graph=graph_batch)
             for box, score, util in zip(batch_boxes, out["score"].cpu().tolist(), out["utility"].cpu().tolist()):
                 results.append({"box": box, "score": float(score), "utility": float(util)})
@@ -66,6 +69,43 @@ def main() -> None:
         vis = draw_boxes(img, [item["box"] for item in results], labels)
         Path(args.out_vis).parent.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(args.out_vis), cv2.cvtColor(vis, cv2.COLOR_RGB2BGR))
+
+
+def _expand_scoring_graph(graph: dict[str, torch.Tensor], batch_size: int) -> dict[str, torch.Tensor]:
+    scoring_keys = {
+        "full_vec",
+        "node_tokens",
+        "node_boxes",
+        "node_role_logits",
+        "node_importance",
+        "node_valid_logits",
+        "relation_logits",
+        "relation_weight",
+        "action_logits",
+    }
+    out = {}
+    for key in scoring_keys:
+        value = graph[key]
+        out[key] = value.expand(batch_size, *value.shape[1:]) if value.size(0) == 1 else value
+    return out
+
+
+def _merge_boxes(anchors, query_boxes, image_w: int, image_h: int):
+    seen = {tuple(box) for box in anchors}
+    out = list(anchors)
+    for box in query_boxes:
+        x1, y1, x2, y2 = [int(round(float(v))) for v in box[:4]]
+        x1 = max(0, min(image_w - 1, x1))
+        y1 = max(0, min(image_h - 1, y1))
+        x2 = max(0, min(image_w, x2))
+        y2 = max(0, min(image_h, y2))
+        if x2 <= x1 + 4 or y2 <= y1 + 4:
+            continue
+        key = (x1, y1, x2, y2)
+        if key not in seen:
+            seen.add(key)
+            out.append([x1, y1, x2, y2])
+    return out
 
 
 if __name__ == "__main__":
