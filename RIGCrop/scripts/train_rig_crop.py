@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict
 
@@ -74,7 +75,16 @@ def main() -> None:
     for epoch in range(1, int(cfg.get("epochs", 10)) + 1):
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
-        train_logs = run_epoch(model, train_loader, optimizer, device, loss_weights)
+        train_logs = run_epoch(
+            model,
+            train_loader,
+            optimizer,
+            device,
+            loss_weights,
+            epoch=epoch,
+            log_interval=int(cfg.get("log_interval", 1000)),
+            is_main=is_main,
+        )
         train_logs = _reduce_logs(train_logs) if distributed else train_logs
         metrics = {"epoch": epoch, **{f"train_{k}": v for k, v in train_logs.items()}}
         if val_loader and is_main:
@@ -97,10 +107,21 @@ def main() -> None:
         dist.destroy_process_group()
 
 
-def run_epoch(model: RIGCropModel, loader: DataLoader, optimizer: torch.optim.Optimizer, device: torch.device, loss_weights: Dict[str, Any]) -> Dict[str, float]:
+def run_epoch(
+    model: RIGCropModel,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+    loss_weights: Dict[str, Any],
+    epoch: int = 1,
+    log_interval: int = 1000,
+    is_main: bool = True,
+) -> Dict[str, float]:
     model.train()
     meters = _meters()
-    for batch in loader:
+    total_steps = len(loader)
+    start_time = time.time()
+    for step, batch in enumerate(loader, start=1):
         batch = _to_device(batch, device)
         graph = _encode_graph(model, batch["image"])
         winner = model(batch["image"], batch["winner_crop"], batch["winner_box_feat"], graph=graph)
@@ -110,6 +131,8 @@ def run_epoch(model: RIGCropModel, loader: DataLoader, optimizer: torch.optim.Op
         losses["total"].backward()
         optimizer.step()
         _update_meters(meters, losses, winner["score"] - loser["score"], batch["image"].size(0))
+        if is_main and log_interval > 0 and (step == 1 or step % log_interval == 0 or step == total_steps):
+            _print_train_progress(epoch, step, total_steps, meters, optimizer, start_time)
     return {key: meter.avg for key, meter in meters.items()}
 
 
@@ -179,6 +202,41 @@ def _update_meters(meters: Dict[str, AverageMeter], losses: Dict[str, torch.Tens
     meters["action_loss"].update(float(losses["action"].detach().cpu()), n)
     meters["pairwise_acc"].update(float((margin > 0).float().mean().detach().cpu()), n)
     meters["score_margin"].update(float(margin.mean().detach().cpu()), n)
+
+
+def _print_train_progress(
+    epoch: int,
+    step: int,
+    total_steps: int,
+    meters: Dict[str, AverageMeter],
+    optimizer: torch.optim.Optimizer,
+    start_time: float,
+) -> None:
+    elapsed = max(time.time() - start_time, 1e-6)
+    sec_per_step = elapsed / max(step, 1)
+    eta = sec_per_step * max(total_steps - step, 0)
+    lr = optimizer.param_groups[0].get("lr", 0.0)
+    print(
+        "[rig-train-step] "
+        f"epoch={epoch} step={step}/{total_steps} "
+        f"loss={meters['loss'].avg:.4f} crop={meters['crop_loss'].avg:.4f} "
+        f"node={meters['node_loss'].avg:.4f} rel={meters['relation_loss'].avg:.4f} "
+        f"utility={meters['utility_loss'].avg:.4f} query={meters['query_loss'].avg:.4f} "
+        f"acc={meters['pairwise_acc'].avg:.4f} margin={meters['score_margin'].avg:.4f} "
+        f"lr={float(lr):.3g} elapsed={_format_seconds(elapsed)} eta={_format_seconds(eta)}",
+        flush=True,
+    )
+
+
+def _format_seconds(seconds: float) -> str:
+    seconds = int(max(seconds, 0))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m{secs:02d}s"
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+    return f"{secs}s"
 
 
 def _init_distributed() -> bool:

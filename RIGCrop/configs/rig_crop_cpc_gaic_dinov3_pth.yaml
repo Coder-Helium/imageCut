@@ -6,6 +6,7 @@ output_dir: RIGCrop/runs/rig_crop_cpc_gaic_dinov3_pth
 batch_size: 4
 num_workers: 4
 epochs: 30
+log_interval: 1000
 lr: 0.0001
 weight_decay: 0.0001
 
