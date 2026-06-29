@@ -138,7 +138,7 @@ main() {
   log "repo=${ROOT_DIR}"
   activate_or_create_conda
   log "python=$(command -v python)"
-  python -m pip install -U pip setuptools wheel
+  python -m pip install -U pip wheel "setuptools<82"
   install_torch
   pip_install_filtered_requirements "${ROOT_DIR}/requirements-rigformer.txt"
   if [[ "${INSTALL_DACC}" == "1" ]]; then
