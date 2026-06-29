@@ -5,6 +5,11 @@ numpy>=1.24
 PyYAML>=6.0
 scipy>=1.10
 matplotlib>=3.7
+torchmetrics>=1.4
+einops>=0.7
+omegaconf>=2.3
+safetensors>=0.4
+huggingface_hub[hf_xet]>=0.34
 
 # Optional production backbones. Install at least one of these on the server
 # when using DINOv3 / foundation-backbone configs.

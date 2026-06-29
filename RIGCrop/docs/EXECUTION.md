@@ -6,7 +6,27 @@
 cd ~/workspace/imageCut
 ```
 
-生产主模型已经重构为 RIGFormer。服务器建议安装：
+生产主模型已经重构为 RIGFormer。新服务器建议一键安装：
+
+```bash
+bash scripts/setup_rigformer_server.sh
+```
+
+默认会创建或复用 `llm_env`，安装 CUDA PyTorch、RIGFormer/DACC 基础依赖、DINOv3 local torch.hub 所需依赖，并 clone DINOv3 官方代码到 `$HOME/dinov3`。
+
+已有 conda 环境时：
+
+```bash
+CREATE_CONDA=0 bash scripts/setup_rigformer_server.sh
+```
+
+如果服务器 PyTorch CUDA 轮子需要换版本，例如 `cu121`：
+
+```bash
+TORCH_CUDA=cu121 bash scripts/setup_rigformer_server.sh
+```
+
+手动最小安装：
 
 ```bash
 pip install -r requirements-rigformer.txt
