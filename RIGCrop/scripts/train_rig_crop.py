@@ -5,6 +5,7 @@ import argparse
 import os
 import sys
 import time
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Dict
 
@@ -34,7 +35,7 @@ def main() -> None:
 
     cfg = load_config(args.config)
     set_seed(int(cfg.get("seed", 42)))
-    distributed = _init_distributed()
+    distributed = _init_distributed(timeout_seconds=int(cfg.get("ddp_timeout_seconds", 7200)))
     rank = _rank()
     is_main = rank == 0
     device = _distributed_device(cfg.get("device", "auto"))
@@ -45,6 +46,7 @@ def main() -> None:
     train_ds = _build_train_dataset(cfg)
     val_ds = RIGPairwiseDataset(**cfg["val_dataset"]) if cfg.get("val_dataset", {}).get("jsonl_path") else None
     train_sampler = DistributedSampler(train_ds, shuffle=True) if distributed else None
+    val_sampler = DistributedSampler(val_ds, shuffle=False) if distributed and val_ds is not None else None
     train_loader = DataLoader(
         train_ds,
         batch_size=int(cfg.get("batch_size", 16)),
@@ -53,7 +55,18 @@ def main() -> None:
         num_workers=int(cfg.get("num_workers", 0)),
         pin_memory=torch.cuda.is_available(),
     )
-    val_loader = DataLoader(val_ds, batch_size=int(cfg.get("batch_size", 16)), shuffle=False, num_workers=int(cfg.get("num_workers", 0))) if val_ds else None
+    val_loader = (
+        DataLoader(
+            val_ds,
+            batch_size=int(cfg.get("val_batch_size", cfg.get("batch_size", 16))),
+            shuffle=False,
+            sampler=val_sampler,
+            num_workers=int(cfg.get("num_workers", 0)),
+            pin_memory=torch.cuda.is_available(),
+        )
+        if val_ds
+        else None
+    )
 
     model = RIGCropModel(**cfg.get("model", {})).to(device)
     if distributed:
@@ -87,13 +100,15 @@ def main() -> None:
         )
         train_logs = _reduce_logs(train_logs) if distributed else train_logs
         metrics = {"epoch": epoch, **{f"train_{k}": v for k, v in train_logs.items()}}
-        if val_loader and is_main:
-            val_logs = run_eval(_unwrap(model), val_loader, device, loss_weights)
-            metrics.update({f"val_{k}": v for k, v in val_logs.items()})
-            if val_logs["pairwise_acc"] > best_acc:
-                best_acc = val_logs["pairwise_acc"]
-                save_checkpoint(out_dir / "best.pt", _unwrap(model), optimizer, epoch, metrics, cfg)
-        elif not val_loader and is_main:
+        if val_loader:
+            val_logs = run_eval(model, val_loader, device, loss_weights)
+            val_logs = _reduce_logs(val_logs) if distributed else val_logs
+            if is_main:
+                metrics.update({f"val_{k}": v for k, v in val_logs.items()})
+                if val_logs["pairwise_acc"] > best_acc:
+                    best_acc = val_logs["pairwise_acc"]
+                    save_checkpoint(out_dir / "best.pt", _unwrap(model), optimizer, epoch, metrics, cfg)
+        elif is_main:
             save_checkpoint(out_dir / "best.pt", _unwrap(model), optimizer, epoch, metrics, cfg)
         if is_main:
             save_checkpoint(out_dir / "last.pt", _unwrap(model), optimizer, epoch, metrics, cfg)
@@ -140,13 +155,14 @@ def run_epoch(
 def run_eval(model: RIGCropModel, loader: DataLoader, device: torch.device, loss_weights: Dict[str, Any]) -> Dict[str, float]:
     model.eval()
     meters = _meters()
-    for batch in loader:
-        batch = _to_device(batch, device)
-        graph = _encode_graph(model, batch["image"])
-        winner = model(batch["image"], batch["winner_crop"], batch["winner_box_feat"], graph=graph)
-        loser = model(batch["image"], batch["loser_crop"], batch["loser_box_feat"], graph=graph)
-        losses = _losses(winner, loser, batch, loss_weights)
-        _update_meters(meters, losses, winner["score"] - loser["score"], batch["image"].size(0))
+    with torch.no_grad():
+        for batch in loader:
+            batch = _to_device(batch, device)
+            graph = _encode_graph(model, batch["image"])
+            winner = model(batch["image"], batch["winner_crop"], batch["winner_box_feat"], graph=graph)
+            loser = model(batch["image"], batch["loser_crop"], batch["loser_box_feat"], graph=graph)
+            losses = _losses(winner, loser, batch, loss_weights)
+            _update_meters(meters, losses, winner["score"] - loser["score"], batch["image"].size(0))
     return {key: meter.avg for key, meter in meters.items()}
 
 
@@ -239,12 +255,12 @@ def _format_seconds(seconds: float) -> str:
     return f"{secs}s"
 
 
-def _init_distributed() -> bool:
+def _init_distributed(timeout_seconds: int = 7200) -> bool:
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     if world_size <= 1:
         return False
     backend = "nccl" if torch.cuda.is_available() else "gloo"
-    dist.init_process_group(backend=backend)
+    dist.init_process_group(backend=backend, timeout=timedelta(seconds=max(int(timeout_seconds), 600)))
     if torch.cuda.is_available():
         torch.cuda.set_device(_local_rank())
     return True
