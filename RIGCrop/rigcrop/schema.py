@@ -66,6 +66,89 @@ def build_rig_targets(rec: Dict[str, Any], max_nodes: int = 8) -> Dict[str, Any]
     }
 
 
+def compact_rig_record(
+    rec: Dict[str, Any],
+    max_nodes: int = 12,
+    build_if_missing: bool = False,
+    keep_raw_middle_state: bool = False,
+    keep_node_text: bool = False,
+) -> Dict[str, Any]:
+    """Compile a DACC/RIG record into the compact training-time schema.
+
+    The raw VLM middle state may contain long descriptions, free-form reasons,
+    prompt artifacts, and other audit-only fields. Training only needs stable
+    numeric/categorical supervision, so this function keeps DACC crop labels
+    plus a compact ``rig_targets`` block.
+    """
+
+    out: Dict[str, Any] = {}
+    for key in [
+        "sample_id",
+        "image_path",
+        "rel_path",
+        "image_width",
+        "image_height",
+        "width",
+        "height",
+        "best_crop",
+        "best_score",
+    ]:
+        if key in rec:
+            out[key] = rec[key]
+
+    for key in ["cpc_supervision", "gaic_supervision", "quality_flags"]:
+        value = rec.get(key)
+        if isinstance(value, dict) and value:
+            out[key] = _compact_primitive_dict(value)
+
+    out["candidates"] = [_compact_candidate(cand) for cand in rec.get("candidates", []) or [] if isinstance(cand, dict)]
+    if rec.get("pairwise_preferences"):
+        out["pairwise_preferences"] = [
+            _compact_pairwise_preference(pref)
+            for pref in rec.get("pairwise_preferences", []) or []
+            if isinstance(pref, dict)
+        ]
+
+    rig = rec.get("rig_targets")
+    if isinstance(rig, dict) and rig:
+        out["rig_targets"] = compact_rig_targets(rig, max_nodes=max_nodes, keep_node_text=keep_node_text)
+    elif build_if_missing:
+        out["rig_targets"] = compact_rig_targets(build_rig_targets(rec, max_nodes=max_nodes), max_nodes=max_nodes, keep_node_text=keep_node_text)
+
+    if keep_raw_middle_state:
+        for key in ["composition_middle_state", "vlm_understanding"]:
+            value = rec.get(key)
+            if isinstance(value, dict) and value:
+                out[key] = value
+    return out
+
+
+def compact_rig_targets(rig: Dict[str, Any], max_nodes: int = 12, keep_node_text: bool = False) -> Dict[str, Any]:
+    """Keep only trainable RIG supervision and audit scalars."""
+
+    out: Dict[str, Any] = {}
+    for key in ["version", "source_middle_state", "crop_supervision_source", "max_nodes"]:
+        if key in rig:
+            out[key] = rig[key]
+    out["roles"] = list(rig.get("roles", ROLES) or ROLES)
+    out["relation_policies"] = list(rig.get("relation_policies", RELATION_POLICIES) or RELATION_POLICIES)
+    out["actions"] = list(rig.get("actions", ACTIONS) or ACTIONS)
+    out["nodes"] = [_compact_node(node, keep_text=keep_node_text) for node in list(rig.get("nodes", []) or [])[:max_nodes]]
+    while len(out["nodes"]) < max_nodes:
+        out["nodes"].append(_compact_node({}, keep_text=keep_node_text, node_id=len(out["nodes"])))
+    out["relations"] = _compact_relations(rig.get("relations", {}), max_nodes=max_nodes)
+    out["candidate_utilities"] = {
+        str(cid): _compact_candidate_utility(item)
+        for cid, item in (rig.get("candidate_utilities", {}) or {}).items()
+        if isinstance(item, dict)
+    }
+    actions = rig.get("action_targets", {}) if isinstance(rig.get("action_targets"), dict) else {}
+    out["action_targets"] = {"multi_hot": _compact_float_list(actions.get("multi_hot", []), len(ACTIONS))}
+    flags = rig.get("graph_quality_flags", {}) if isinstance(rig.get("graph_quality_flags"), dict) else {}
+    out["graph_quality_flags"] = _compact_primitive_dict(flags)
+    return out
+
+
 def audit_records(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     counters: Counter[str] = Counter()
     sources: Counter[str] = Counter()
@@ -125,6 +208,162 @@ def audit_records(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "top_relation_to_subject": relation_texts.most_common(30),
         "top_suggested_actions": action_texts.most_common(30),
     }
+
+
+def _compact_candidate(cand: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for key in ["candidate_id", "box", "score", "box_format", "source", "rel_path"]:
+        if key in cand:
+            out[key] = cand[key]
+    scores = cand.get("scores")
+    if isinstance(scores, dict) and scores:
+        out["scores"] = _compact_scores(scores)
+    return out
+
+
+def _compact_scores(scores: Dict[str, Any]) -> Dict[str, Any]:
+    keep = [
+        "mos",
+        "final_score",
+        "cpc_raw_score",
+        "score",
+        "aesthetic_score",
+        "technical_score",
+        "composition_score",
+    ]
+    out: Dict[str, Any] = {}
+    for key in keep:
+        if key in scores:
+            out[key] = scores[key]
+    if not out:
+        out.update(_compact_primitive_dict(scores))
+    return out
+
+
+def _compact_pairwise_preference(pref: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for key in ["winner", "loser", "weight", "source"]:
+        if key in pref:
+            out[key] = pref[key]
+    return out
+
+
+def _compact_node(node: Dict[str, Any], keep_text: bool = False, node_id: int | None = None) -> Dict[str, Any]:
+    role = str(node.get("role", "padding") or "padding")
+    if role not in ROLE_TO_ID:
+        role = "padding"
+    out: Dict[str, Any] = {
+        "node_id": int(node.get("node_id", node_id if node_id is not None else 0) or 0),
+        "role": role,
+        "role_id": int(node.get("role_id", ROLE_TO_ID[role]) or ROLE_TO_ID[role]),
+        "importance": _as_float(node.get("importance", 0.0), 0.0),
+        "bbox_norm": _compact_box(node.get("bbox_norm", [0.0, 0.0, 0.0, 0.0])),
+        "has_box": bool(node.get("has_box", False)),
+        "valid": bool(node.get("valid", False)),
+    }
+    if keep_text:
+        for key in ["name", "category", "description", "relation_to_subject", "promoted_from"]:
+            if node.get(key):
+                out[key] = _text(node.get(key))
+    return out
+
+
+def _compact_relations(relations: Any, max_nodes: int) -> Dict[str, Any]:
+    if not isinstance(relations, dict):
+        relations = {}
+    return {
+        "policy": _compact_int_matrix(relations.get("policy", []), max_nodes=max_nodes),
+        "weight": _compact_float_matrix(relations.get("weight", []), max_nodes=max_nodes),
+        "mask": _compact_bool_matrix(relations.get("mask", []), max_nodes=max_nodes),
+    }
+
+
+def _compact_candidate_utility(item: Dict[str, Any]) -> Dict[str, Any]:
+    keep = [
+        "utility_raw",
+        "utility_unit",
+        "node_keep",
+        "relation_keep",
+        "boundary_cut_penalty",
+        "distractor_penalty",
+        "subject_position_score",
+    ]
+    out: Dict[str, Any] = {}
+    for key in keep:
+        if key in item:
+            out[key] = _as_float(item.get(key), 0.0)
+    return out
+
+
+def _compact_primitive_dict(value: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for key, item in value.items():
+        if isinstance(item, (str, int, float, bool)) or item is None:
+            out[str(key)] = item
+    return out
+
+
+def _compact_box(value: Any) -> List[float]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)) or len(value) < 4:
+        return [0.0, 0.0, 0.0, 0.0]
+    try:
+        return [float(v) for v in value[:4]]
+    except (TypeError, ValueError):
+        return [0.0, 0.0, 0.0, 0.0]
+
+
+def _compact_float_list(values: Any, length: int) -> List[float]:
+    out = [0.0 for _ in range(length)]
+    if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
+        return out
+    for idx, value in enumerate(values[:length]):
+        try:
+            out[idx] = float(value)
+        except (TypeError, ValueError):
+            out[idx] = 0.0
+    return out
+
+
+def _compact_int_matrix(values: Any, max_nodes: int) -> List[List[int]]:
+    out = [[0 for _ in range(max_nodes)] for _ in range(max_nodes)]
+    if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
+        return out
+    for i, row in enumerate(values[:max_nodes]):
+        if not isinstance(row, Sequence) or isinstance(row, (str, bytes)):
+            continue
+        for j, value in enumerate(row[:max_nodes]):
+            try:
+                out[i][j] = int(value)
+            except (TypeError, ValueError):
+                out[i][j] = 0
+    return out
+
+
+def _compact_float_matrix(values: Any, max_nodes: int) -> List[List[float]]:
+    out = [[0.0 for _ in range(max_nodes)] for _ in range(max_nodes)]
+    if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
+        return out
+    for i, row in enumerate(values[:max_nodes]):
+        if not isinstance(row, Sequence) or isinstance(row, (str, bytes)):
+            continue
+        for j, value in enumerate(row[:max_nodes]):
+            try:
+                out[i][j] = float(value)
+            except (TypeError, ValueError):
+                out[i][j] = 0.0
+    return out
+
+
+def _compact_bool_matrix(values: Any, max_nodes: int) -> List[List[bool]]:
+    out = [[False for _ in range(max_nodes)] for _ in range(max_nodes)]
+    if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
+        return out
+    for i, row in enumerate(values[:max_nodes]):
+        if not isinstance(row, Sequence) or isinstance(row, (str, bytes)):
+            continue
+        for j, value in enumerate(row[:max_nodes]):
+            out[i][j] = bool(value)
+    return out
 
 
 def _middle_state(rec: Dict[str, Any]) -> Dict[str, Any]:

@@ -209,3 +209,41 @@ top_suggested_actions
 ```
 
 如果 `main_subject_bbox` 很低，训练时应降低 node bbox loss 权重，或先改 Qwen prompt 补 bbox。
+
+## 5. Compact training JSONL
+
+raw VLM middle-state 可以包含大量自由文本解释，但训练主文件不应直接学习这些高熵字段。推荐在生成 `rig_targets` 后，再编译一份 compact JSONL：
+
+```bash
+python RIGCrop/scripts/compile_middle_state_train_jsonl.py \
+  --input-jsonl data/cpc_rig/metadata/train.jsonl \
+  --out-jsonl data/cpc_rig/metadata/train.compact.jsonl \
+  --max-nodes 12 \
+  --overwrite
+```
+
+compact 版本保留：
+
+```text
+sample_id / image_path / image size
+candidates / pairwise_preferences
+rig_targets.nodes: role, importance, bbox, valid flags
+rig_targets.relations: policy, weight, mask
+rig_targets.candidate_utilities: numeric utility components
+rig_targets.action_targets.multi_hot
+```
+
+默认删除：
+
+```text
+composition_middle_state
+vlm_understanding
+node name/category/description/relation_to_subject
+free-form reason / critique text
+```
+
+训练推荐使用 `*.compact.jsonl`，raw JSONL 留作审计、可视化和 prompt debug。详见：
+
+```text
+RIGCrop/docs/MIDDLE_STATE_COMPACT_COMPILER.md
+```

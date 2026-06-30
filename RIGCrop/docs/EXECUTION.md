@@ -195,6 +195,22 @@ python RIGCrop/scripts/build_middle_state_targets.py \
 wc -l data/cpc_rig/metadata/train.jsonl data/cpc_rig/metadata/val.jsonl
 ```
 
+如果 raw Qwen middle-state 字段较多，建议额外编译训练版 compact JSONL：
+
+```bash
+python RIGCrop/scripts/compile_middle_state_train_jsonl.py \
+  --input-jsonl data/cpc_rig/metadata/train.jsonl \
+  --out-jsonl data/cpc_rig/metadata/train.compact.jsonl \
+  --max-nodes 12 \
+  --overwrite
+```
+
+compact 版本会保留训练需要的 node/relation/utility/action 数值监督，删除 raw VLM 长文本字段。详细说明见：
+
+```text
+RIGCrop/docs/MIDDLE_STATE_COMPACT_COMPILER.md
+```
+
 ## 5. 单卡训练
 
 ```bash

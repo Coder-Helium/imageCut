@@ -11,7 +11,7 @@ from torch.utils.data import Dataset
 from .box_ops import candidate_box_features, normalize_xyxy
 from .image_io import crop_rgb, read_image_rgb, resize_to_tensor
 from .io import load_jsonl
-from .schema import ACTIONS, RELATION_POLICIES, ROLES
+from .schema import ACTIONS, RELATION_POLICIES, ROLES, compact_rig_record
 
 
 def score_to_unit(score: float) -> float:
@@ -40,8 +40,23 @@ class RIGPairwiseDataset(Dataset):
         derive_pairs_from_scores: bool = True,
         seed: int = 42,
         image_cache_size: int = 8,
+        compact_records: bool = True,
+        keep_raw_middle_state: bool = False,
+        keep_node_text: bool = False,
     ) -> None:
-        self.records = load_jsonl(jsonl_path, max_records=max_records or 0)
+        records = load_jsonl(jsonl_path, max_records=max_records or 0)
+        if compact_records:
+            records = [
+                compact_rig_record(
+                    rec,
+                    max_nodes=max_nodes,
+                    build_if_missing=False,
+                    keep_raw_middle_state=keep_raw_middle_state,
+                    keep_node_text=keep_node_text,
+                )
+                for rec in records
+            ]
+        self.records = records
         self.image_size = image_size
         self.crop_size = crop_size
         self.max_nodes = max_nodes

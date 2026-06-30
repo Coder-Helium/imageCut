@@ -23,6 +23,7 @@ train_datasets:
     max_nodes: 12
     derive_pairs_from_scores: true
     image_cache_size: 8
+    compact_records: true
   - jsonl_path: /home/hmx/nas/beauty_dataset/data/gaic_rig/metadata/train.jsonl
     image_size: 384
     crop_size: 224
@@ -32,6 +33,7 @@ train_datasets:
     derive_pairs_from_scores: true
     min_score_gap: 0.05
     image_cache_size: 8
+    compact_records: true
 
 val_dataset:
   jsonl_path: /home/hmx/nas/beauty_dataset/data/cpc_rig/metadata/val.jsonl
@@ -42,6 +44,7 @@ val_dataset:
   max_nodes: 12
   derive_pairs_from_scores: true
   image_cache_size: 8
+  compact_records: true
 
 model:
   d_model: 384
