@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -38,11 +39,19 @@ class RIGPairwiseDataset(Dataset):
         min_score_gap: float = 0.05,
         derive_pairs_from_scores: bool = True,
         seed: int = 42,
+        image_cache_size: int = 8,
     ) -> None:
         self.records = load_jsonl(jsonl_path, max_records=max_records or 0)
         self.image_size = image_size
         self.crop_size = crop_size
         self.max_nodes = max_nodes
+        self.image_cache_size = max(0, int(image_cache_size or 0))
+        self._image_cache: OrderedDict[int, Any] = OrderedDict()
+        self._image_tensor_cache: OrderedDict[int, torch.Tensor] = OrderedDict()
+        self._candidate_maps: List[Dict[str, Any]] = [
+            {str(c.get("candidate_id")): c for c in rec.get("candidates", [])}
+            for rec in self.records
+        ]
         self.items: List[Tuple[int, Dict[str, Any]]] = []
         rng = random.Random(seed)
         for ridx, rec in enumerate(self.records):
@@ -60,17 +69,17 @@ class RIGPairwiseDataset(Dataset):
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         ridx, pref = self.items[idx]
         rec = self.records[ridx]
-        candidates = {str(c.get("candidate_id")): c for c in rec.get("candidates", [])}
+        candidates = self._candidate_maps[ridx]
         winner = candidates[str(pref["winner"])]
         loser = candidates[str(pref["loser"])]
-        img = read_image_rgb(rec["image_path"])
+        img, full_tensor = self._load_image(ridx, rec)
         h, w = img.shape[:2]
         winner_box = winner["box"]
         loser_box = loser["box"]
         rig = rec.get("rig_targets", {}) if isinstance(rec.get("rig_targets"), dict) else {}
         utilities = rig.get("candidate_utilities", {}) if isinstance(rig.get("candidate_utilities"), dict) else {}
         return {
-            "image": resize_to_tensor(img, self.image_size),
+            "image": full_tensor,
             "winner_crop": resize_to_tensor(crop_rgb(img, winner_box), self.crop_size),
             "loser_crop": resize_to_tensor(crop_rgb(img, loser_box), self.crop_size),
             "winner_box_feat": torch.tensor(candidate_box_features(normalize_xyxy(winner_box, w, h)), dtype=torch.float32),
@@ -83,6 +92,30 @@ class RIGPairwiseDataset(Dataset):
             "winner": str(pref["winner"]),
             "loser": str(pref["loser"]),
         }
+
+    def _load_image(self, ridx: int, rec: Dict[str, Any]) -> Tuple[Any, torch.Tensor]:
+        if self.image_cache_size <= 0:
+            img = read_image_rgb(rec["image_path"])
+            return img, resize_to_tensor(img, self.image_size)
+
+        img = self._image_cache.get(ridx)
+        full_tensor = self._image_tensor_cache.get(ridx)
+        if img is not None and full_tensor is not None:
+            self._image_cache.move_to_end(ridx)
+            self._image_tensor_cache.move_to_end(ridx)
+            return img, full_tensor
+
+        img = read_image_rgb(rec["image_path"])
+        full_tensor = resize_to_tensor(img, self.image_size)
+        self._image_cache[ridx] = img
+        self._image_tensor_cache[ridx] = full_tensor
+        self._image_cache.move_to_end(ridx)
+        self._image_tensor_cache.move_to_end(ridx)
+        while len(self._image_cache) > self.image_cache_size:
+            self._image_cache.popitem(last=False)
+        while len(self._image_tensor_cache) > self.image_cache_size:
+            self._image_tensor_cache.popitem(last=False)
+        return img, full_tensor
 
 
 def _derive_pairs_from_candidate_scores(rec: Dict[str, Any], min_score_gap: float = 0.05) -> List[Dict[str, Any]]:

@@ -5,6 +5,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Dict
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -48,12 +49,19 @@ def main() -> None:
     margins = []
     with torch.no_grad():
         for batch in loader:
-            image = batch["image"].to(device)
+            image = batch["image"].to(device, non_blocking=True)
             graph = model.encode_graph(image)
-            winner = model(image, batch["winner_crop"].to(device), batch["winner_box_feat"].to(device), graph=graph)
-            loser = model(image, batch["loser_crop"].to(device), batch["loser_box_feat"].to(device), graph=graph)
-            weight = batch["weight"].to(device)
-            margin = winner["score"] - loser["score"]
+            winner, loser = _score_pair(
+                model,
+                image,
+                batch["winner_crop"].to(device, non_blocking=True),
+                batch["loser_crop"].to(device, non_blocking=True),
+                batch["winner_box_feat"].to(device, non_blocking=True),
+                batch["loser_box_feat"].to(device, non_blocking=True),
+                graph,
+            )
+            weight = batch["weight"].to(device, non_blocking=True)
+            margin = _ranking_score(winner) - _ranking_score(loser)
             ok = margin > 0
             total += int(ok.numel())
             correct += int(ok.sum().cpu())
@@ -73,6 +81,48 @@ def main() -> None:
             indent=2,
         )
     )
+
+
+def _score_pair(
+    model: RIGCropModel,
+    image: torch.Tensor,
+    winner_crop: torch.Tensor,
+    loser_crop: torch.Tensor,
+    winner_box_feat: torch.Tensor,
+    loser_box_feat: torch.Tensor,
+    graph: Dict[str, torch.Tensor],
+) -> tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+    batch_size = image.size(0)
+    out = model(
+        torch.cat([image, image], dim=0),
+        torch.cat([winner_crop, loser_crop], dim=0),
+        torch.cat([winner_box_feat, loser_box_feat], dim=0),
+        graph=_repeat_graph_for_pair(graph, batch_size),
+    )
+    winner: Dict[str, torch.Tensor] = {}
+    loser: Dict[str, torch.Tensor] = {}
+    for key, value in out.items():
+        if torch.is_tensor(value) and value.size(0) == batch_size * 2:
+            winner[key] = value[:batch_size]
+            loser[key] = value[batch_size:]
+        else:
+            winner[key] = value
+            loser[key] = value
+    return winner, loser
+
+
+def _repeat_graph_for_pair(graph: Dict[str, torch.Tensor], batch_size: int) -> Dict[str, torch.Tensor]:
+    out: Dict[str, torch.Tensor] = {}
+    for key, value in graph.items():
+        if torch.is_tensor(value) and value.size(0) == batch_size:
+            out[key] = torch.cat([value, value], dim=0)
+        else:
+            out[key] = value
+    return out
+
+
+def _ranking_score(out: Dict[str, torch.Tensor]) -> torch.Tensor:
+    return out.get("score_logit", out["score"])
 
 
 if __name__ == "__main__":

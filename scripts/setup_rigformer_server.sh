@@ -26,6 +26,10 @@ require_cmd() {
   fi
 }
 
+pip_install() {
+  (cd "${ROOT_DIR}" && python -m pip install "$@")
+}
+
 activate_or_create_conda() {
   if [[ "${CREATE_CONDA}" != "1" ]]; then
     log "CREATE_CONDA=0, using current Python: $(command -v python)"
@@ -54,7 +58,7 @@ pip_install_filtered_requirements() {
   grep -vE '^(torch|torchvision)([<>=~! ]|$)' "${req}" > "${tmp}" || true
   if [[ -s "${tmp}" ]]; then
     log "Installing ${req} without torch/torchvision"
-    python -m pip install -r "${tmp}"
+    pip_install -r "${tmp}"
   fi
   rm -f "${tmp}"
 }
@@ -66,11 +70,11 @@ install_torch() {
   fi
   if [[ "${TORCH_CUDA}" == "cpu" ]]; then
     log "Installing PyTorch CPU wheels"
-    python -m pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.6" "torchvision>=0.21"
+    pip_install --index-url https://download.pytorch.org/whl/cpu "torch>=2.6" "torchvision>=0.21"
     return
   fi
   log "Installing PyTorch CUDA wheels: ${TORCH_CUDA}"
-  python -m pip install --index-url "https://download.pytorch.org/whl/${TORCH_CUDA}" "torch>=2.6" "torchvision>=0.21"
+  pip_install --index-url "https://download.pytorch.org/whl/${TORCH_CUDA}" "torch>=2.6" "torchvision>=0.21"
 }
 
 install_dinov3_repo() {
@@ -138,7 +142,7 @@ main() {
   log "repo=${ROOT_DIR}"
   activate_or_create_conda
   log "python=$(command -v python)"
-  python -m pip install -U pip wheel "setuptools<82"
+  pip_install -U pip wheel "setuptools<82"
   install_torch
   pip_install_filtered_requirements "${ROOT_DIR}/requirements-rigformer.txt"
   if [[ "${INSTALL_DACC}" == "1" ]]; then
@@ -152,7 +156,7 @@ main() {
       tmp="$(mktemp)"
       grep -vE '^(torch|torchvision|ultralytics)([<>=~! ]|$)' "${ROOT_DIR}/requirements-composition-builder.txt" > "${tmp}" || true
       if [[ -s "${tmp}" ]]; then
-        python -m pip install -r "${tmp}"
+        pip_install -r "${tmp}"
       fi
       rm -f "${tmp}"
     fi
@@ -160,7 +164,7 @@ main() {
   if [[ "${INSTALL_LOCAL_QWEN}" == "1" ]]; then
     pip_install_filtered_requirements "${ROOT_DIR}/requirements-local-qwen.txt"
   fi
-  python -m pip install -U "pillow>=10" "requests>=2.31" "tqdm>=4.66"
+  pip_install -U "pillow>=10" "requests>=2.31" "tqdm>=4.66"
   install_dinov3_repo
   verify_environment
   run_smoke_if_requested

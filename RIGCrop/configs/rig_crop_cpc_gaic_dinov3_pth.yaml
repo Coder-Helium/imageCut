@@ -5,9 +5,12 @@ output_dir: RIGCrop/runs/rig_crop_cpc_gaic_dinov3_pth
 # DDP uses this as per-process batch size. Start conservatively for DINOv3-B.
 batch_size: 6
 num_workers: 4
+persistent_workers: true
+prefetch_factor: 4
 epochs: 30
 log_interval: 1000
 ddp_timeout_seconds: 7200
+find_unused_parameters: false
 lr: 0.0001
 weight_decay: 0.0001
 
@@ -19,6 +22,7 @@ train_datasets:
     max_pairs_per_record: 128
     max_nodes: 12
     derive_pairs_from_scores: true
+    image_cache_size: 8
   - jsonl_path: /home/hmx/nas/beauty_dataset/data/gaic_rig/metadata/train.jsonl
     image_size: 384
     crop_size: 224
@@ -27,6 +31,7 @@ train_datasets:
     max_nodes: 12
     derive_pairs_from_scores: true
     min_score_gap: 0.05
+    image_cache_size: 8
 
 val_dataset:
   jsonl_path: /home/hmx/nas/beauty_dataset/data/cpc_rig/metadata/val.jsonl
@@ -36,6 +41,7 @@ val_dataset:
   max_pairs_per_record: 128
   max_nodes: 12
   derive_pairs_from_scores: true
+  image_cache_size: 8
 
 model:
   d_model: 384
@@ -56,8 +62,8 @@ model:
 
 loss:
   crop_pair: 1.0
-  node: 0.3
-  relation: 0.2
-  utility: 0.3
-  query: 0.1
-  action: 0.05
+  node: 0.1
+  relation: 0.06
+  utility: 0.15
+  query: 0.05
+  action: 0.0

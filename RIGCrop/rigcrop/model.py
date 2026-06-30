@@ -169,9 +169,10 @@ class RIGCropModel(nn.Module):
         state = crop_token.squeeze(1)
         head_in = torch.cat([state, graph_feat], dim=-1)
         utility = torch.sigmoid(self.utility_head(head_in)).squeeze(-1)
-        score = torch.sigmoid(self.score_head(head_in)).squeeze(-1)
+        score_logit = self.score_head(head_in).squeeze(-1)
+        score = torch.sigmoid(score_logit)
         out = dict(graph)
-        out.update({"score": score, "utility": utility, "graph_feat": graph_feat, "crop_state": state})
+        out.update({"score": score, "score_logit": score_logit, "utility": utility, "graph_feat": graph_feat, "crop_state": state})
         return out
 
     def graph_features_for_crop(self, graph: dict[str, torch.Tensor], crop_boxes: torch.Tensor) -> torch.Tensor:
