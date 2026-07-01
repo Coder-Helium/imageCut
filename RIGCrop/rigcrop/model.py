@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 from .backbones import BackboneOutput, build_visual_backbone
@@ -35,6 +36,8 @@ class RIGCropModel(nn.Module):
         num_crop_queries: int = 16,
         nhead: int = 8,
         dropout: float = 0.1,
+        crop_feature_mode: str = "roi_tokens",
+        crop_pool_size: int = 4,
         num_roles: int = len(ROLES),
         num_relations: int = len(RELATION_POLICIES),
         num_actions: int = len(ACTIONS),
@@ -45,6 +48,8 @@ class RIGCropModel(nn.Module):
         self.num_relations = num_relations
         self.num_crop_queries = num_crop_queries
         self.d_model = int(d_model or graph_dim or feat_dim)
+        self.crop_feature_mode = _normalize_crop_feature_mode(crop_feature_mode)
+        self.crop_pool_size = max(1, int(crop_pool_size))
 
         heads = _valid_num_heads(self.d_model, nhead)
         self.backbone = build_visual_backbone(backbone, output_dim=self.d_model, fallback_width=width)
@@ -122,6 +127,8 @@ class RIGCropModel(nn.Module):
         relation_weight = torch.sigmoid(self.relation_weight(rel_pair)).squeeze(-1)
         out = {
             "full_vec": visual.pooled,
+            "visual_tokens": visual.tokens,
+            "visual_spatial_size": visual.spatial_size,
             "node_tokens": node_tokens,
             "node_boxes": node_boxes,
             "node_role_logits": node_role_logits,
@@ -141,21 +148,25 @@ class RIGCropModel(nn.Module):
 
     def forward(
         self,
-        image: torch.Tensor,
+        image: torch.Tensor | None,
         crop: torch.Tensor | None = None,
         box_feat: torch.Tensor | None = None,
         graph: dict[str, torch.Tensor] | None = None,
         encode_only: bool = False,
     ) -> dict[str, torch.Tensor]:
         if encode_only:
+            if image is None:
+                raise ValueError("image is required when encode_only=True")
             return self.encode_graph(image)
-        if crop is None or box_feat is None:
-            raise ValueError("crop and box_feat are required unless encode_only=True")
+        if box_feat is None:
+            raise ValueError("box_feat is required unless encode_only=True")
         if graph is None:
+            if image is None:
+                raise ValueError("image is required when graph is not provided")
             graph = self.encode_graph(image)
-        crop_visual = self.backbone(crop)
+        crop_visual = self.crop_token_for_box(graph, box_feat[:, :4], crop)
         graph_feat = self.graph_features_for_crop(graph, box_feat[:, :4])
-        crop_token = crop_visual.pooled + self.box_mlp(box_feat) + self.utility_component_proj(graph_feat)
+        crop_token = crop_visual + self.box_mlp(box_feat) + self.utility_component_proj(graph_feat)
         crop_token = self.crop_query_norm(crop_token).unsqueeze(1)
         node_tokens = graph["node_tokens"]
         node_mask = torch.sigmoid(graph["node_valid_logits"]).detach() < 0.05
@@ -174,6 +185,48 @@ class RIGCropModel(nn.Module):
         out = dict(graph)
         out.update({"score": score, "score_logit": score_logit, "utility": utility, "graph_feat": graph_feat, "crop_state": state})
         return out
+
+    def uses_crop_image(self) -> bool:
+        """Whether the current configuration needs explicit crop tensors."""
+        return self.crop_feature_mode == "crop_backbone"
+
+    def crop_token_for_box(
+        self,
+        graph: dict[str, torch.Tensor],
+        crop_boxes: torch.Tensor,
+        crop: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if self.crop_feature_mode == "crop_backbone" or "visual_tokens" not in graph:
+            if crop is None:
+                raise ValueError("crop tensor is required for crop_backbone mode or when graph lacks visual_tokens")
+            return self.backbone(crop).pooled
+        return self._roi_pool_visual_tokens(graph, crop_boxes)
+
+    def _roi_pool_visual_tokens(self, graph: dict[str, torch.Tensor], crop_boxes: torch.Tensor) -> torch.Tensor:
+        tokens = graph["visual_tokens"]
+        if tokens.size(0) == 1 and crop_boxes.size(0) > 1:
+            tokens = tokens.expand(crop_boxes.size(0), -1, -1)
+        if tokens.size(0) != crop_boxes.size(0):
+            raise ValueError(f"visual_tokens batch {tokens.size(0)} does not match crop boxes batch {crop_boxes.size(0)}")
+
+        height, width = _resolve_spatial_size(graph.get("visual_spatial_size"), tokens.size(1))
+        if height * width != tokens.size(1):
+            return tokens.mean(dim=1)
+
+        batch, _, dim = tokens.shape
+        feat = tokens.transpose(1, 2).reshape(batch, dim, height, width)
+        boxes = tensor_sanitize_xyxy(crop_boxes)
+        x1, y1, x2, y2 = boxes.unbind(dim=-1)
+        box_w = (x2 - x1).clamp(min=1e-4)
+        box_h = (y2 - y1).clamp(min=1e-4)
+
+        steps = torch.linspace(0.0, 1.0, self.crop_pool_size, device=tokens.device, dtype=tokens.dtype)
+        yy, xx = torch.meshgrid(steps, steps, indexing="ij")
+        grid_x = x1[:, None, None] + box_w[:, None, None] * xx[None, :, :]
+        grid_y = y1[:, None, None] + box_h[:, None, None] * yy[None, :, :]
+        grid = torch.stack([grid_x.mul(2.0).sub(1.0), grid_y.mul(2.0).sub(1.0)], dim=-1)
+        sampled = F.grid_sample(feat, grid, mode="bilinear", padding_mode="border", align_corners=True)
+        return sampled.flatten(2).mean(dim=-1)
 
     def graph_features_for_crop(self, graph: dict[str, torch.Tensor], crop_boxes: torch.Tensor) -> torch.Tensor:
         node_boxes = graph["node_boxes"]
@@ -272,6 +325,26 @@ def _mlp(input_dim: int, hidden_dim: int, output_dim: int, num_layers: int, drop
             if dropout > 0:
                 layers.append(nn.Dropout(dropout))
     return nn.Sequential(*layers)
+
+
+def _normalize_crop_feature_mode(mode: str) -> str:
+    value = str(mode or "roi_tokens").strip().lower()
+    token_modes = {"roi_tokens", "token_roi", "token_pool", "token_pooling", "single_pass", "single-pass"}
+    crop_modes = {"crop_backbone", "crop_image", "crop_encoder", "legacy", "separate_crop"}
+    if value in token_modes:
+        return "roi_tokens"
+    if value in crop_modes:
+        return "crop_backbone"
+    raise ValueError(f"Unknown crop_feature_mode: {mode}")
+
+
+def _resolve_spatial_size(value: Any, num_tokens: int) -> tuple[int, int]:
+    if torch.is_tensor(value) and value.numel() >= 2:
+        return int(value.reshape(-1)[0].item()), int(value.reshape(-1)[1].item())
+    if isinstance(value, (tuple, list)) and len(value) >= 2:
+        return int(value[0]), int(value[1])
+    side = int(num_tokens**0.5)
+    return side, side
 
 
 def _valid_num_heads(dim: int, requested: int) -> int:

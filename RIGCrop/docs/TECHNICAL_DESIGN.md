@@ -205,14 +205,17 @@ global pooled vector -> MLP -> node tokens
 model(image, crop, box_feat, graph=None)
 ```
 
+在 `crop_feature_mode: roi_tokens` 下，`crop` 可以为 `None`；crop 表征来自 full-image token map 的 RoI pooling。旧版独立 crop backbone 可通过 `crop_feature_mode: crop_backbone` 恢复。
+
 内部流程：
 
 ```text
-crop image
-  -> same backbone
+full image
+  -> backbone tokens
+  -> token-space RoI pooling(candidate box)
   -> crop pooled token
-  + box embedding
-  + utility component embedding
+  + box geometry embedding
+  + relation-preservation utility embedding
   -> crop token
   -> cross-attend predicted node tokens
   -> crop score + utility
@@ -325,11 +328,15 @@ L =
 
 ```python
 graph = model.encode_graph(image)
-winner = model(image, winner_crop, winner_box_feat, graph=graph)
-loser  = model(image, loser_crop, loser_box_feat, graph=graph)
+winner = model(None, None, winner_box_feat, graph=graph)
+loser  = model(None, None, loser_box_feat, graph=graph)
 ```
 
-避免 winner/loser 重复编码整图，适合 DINOv3 这类重 backbone。
+避免 winner/loser 额外编码 crop image，使 DINOv3 从约 3 次 backbone / sample 降为 1 次 backbone / sample。详见：
+
+```text
+RIGCrop/docs/TOKEN_ROI_CROP_POOLING.md
+```
 
 ---
 

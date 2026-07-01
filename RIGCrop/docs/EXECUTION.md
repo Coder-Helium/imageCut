@@ -12,6 +12,12 @@ cd ~/workspace/imageCut
 bash scripts/setup_rigformer_server.sh
 ```
 
+服务器迁移、无 GPU 前置检查、Token-RoI 单卡冒烟、6 卡 DDP 启动和常见错误处理见：
+
+```text
+RIGCrop/docs/SERVER_VALIDATION_PIPELINE.md
+```
+
 默认会创建或复用 `llm_env`，安装 CUDA PyTorch、RIGFormer/DACC 基础依赖、DINOv3 local torch.hub 所需依赖，并 clone DINOv3 官方代码到 `$HOME/dinov3`。
 
 已有 conda 环境时：

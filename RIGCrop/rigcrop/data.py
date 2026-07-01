@@ -43,6 +43,7 @@ class RIGPairwiseDataset(Dataset):
         compact_records: bool = True,
         keep_raw_middle_state: bool = False,
         keep_node_text: bool = False,
+        return_crops: bool = True,
     ) -> None:
         records = load_jsonl(jsonl_path, max_records=max_records or 0)
         if compact_records:
@@ -60,6 +61,7 @@ class RIGPairwiseDataset(Dataset):
         self.image_size = image_size
         self.crop_size = crop_size
         self.max_nodes = max_nodes
+        self.return_crops = bool(return_crops)
         self.image_cache_size = max(0, int(image_cache_size or 0))
         self._image_cache: OrderedDict[int, Any] = OrderedDict()
         self._image_tensor_cache: OrderedDict[int, torch.Tensor] = OrderedDict()
@@ -93,10 +95,8 @@ class RIGPairwiseDataset(Dataset):
         loser_box = loser["box"]
         rig = rec.get("rig_targets", {}) if isinstance(rec.get("rig_targets"), dict) else {}
         utilities = rig.get("candidate_utilities", {}) if isinstance(rig.get("candidate_utilities"), dict) else {}
-        return {
+        item = {
             "image": full_tensor,
-            "winner_crop": resize_to_tensor(crop_rgb(img, winner_box), self.crop_size),
-            "loser_crop": resize_to_tensor(crop_rgb(img, loser_box), self.crop_size),
             "winner_box_feat": torch.tensor(candidate_box_features(normalize_xyxy(winner_box, w, h)), dtype=torch.float32),
             "loser_box_feat": torch.tensor(candidate_box_features(normalize_xyxy(loser_box, w, h)), dtype=torch.float32),
             "weight": torch.tensor(float(pref.get("weight", 1.0)), dtype=torch.float32),
@@ -107,6 +107,10 @@ class RIGPairwiseDataset(Dataset):
             "winner": str(pref["winner"]),
             "loser": str(pref["loser"]),
         }
+        if self.return_crops:
+            item["winner_crop"] = resize_to_tensor(crop_rgb(img, winner_box), self.crop_size)
+            item["loser_crop"] = resize_to_tensor(crop_rgb(img, loser_box), self.crop_size)
+        return item
 
     def _load_image(self, ridx: int, rec: Dict[str, Any]) -> Tuple[Any, torch.Tensor]:
         if self.image_cache_size <= 0:

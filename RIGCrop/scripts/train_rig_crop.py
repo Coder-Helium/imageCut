@@ -159,8 +159,8 @@ def run_epoch(
         winner, loser = _score_pair(
             model,
             batch["image"],
-            batch["winner_crop"],
-            batch["loser_crop"],
+            batch.get("winner_crop"),
+            batch.get("loser_crop"),
             batch["winner_box_feat"],
             batch["loser_box_feat"],
             graph,
@@ -186,8 +186,8 @@ def run_eval(model: RIGCropModel, loader: DataLoader, device: torch.device, loss
             winner, loser = _score_pair(
                 model,
                 batch["image"],
-                batch["winner_crop"],
-                batch["loser_crop"],
+                batch.get("winner_crop"),
+                batch.get("loser_crop"),
                 batch["winner_box_feat"],
                 batch["loser_box_feat"],
                 graph,
@@ -231,15 +231,21 @@ def _losses(winner: Dict[str, torch.Tensor], loser: Dict[str, torch.Tensor], bat
 def _score_pair(
     model: RIGCropModel,
     image: torch.Tensor,
-    winner_crop: torch.Tensor,
-    loser_crop: torch.Tensor,
+    winner_crop: torch.Tensor | None,
+    loser_crop: torch.Tensor | None,
     winner_box_feat: torch.Tensor,
     loser_box_feat: torch.Tensor,
     graph: Dict[str, torch.Tensor],
 ) -> tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
     batch_size = image.size(0)
-    pair_image = torch.cat([image, image], dim=0)
-    pair_crop = torch.cat([winner_crop, loser_crop], dim=0)
+    if _model_uses_crop_image(model):
+        if winner_crop is None or loser_crop is None:
+            raise ValueError("winner_crop and loser_crop are required when model uses crop_backbone mode")
+        pair_image = torch.cat([image, image], dim=0)
+        pair_crop = torch.cat([winner_crop, loser_crop], dim=0)
+    else:
+        pair_image = None
+        pair_crop = None
     pair_box_feat = torch.cat([winner_box_feat, loser_box_feat], dim=0)
     pair_graph = _repeat_graph_for_pair(graph, batch_size)
     out = model(pair_image, pair_crop, pair_box_feat, graph=pair_graph)
@@ -379,6 +385,11 @@ def _encode_graph(model, image: torch.Tensor) -> Dict[str, torch.Tensor]:
     if hasattr(model, "module"):
         return model(image, encode_only=True)
     return model.encode_graph(image)
+
+
+def _model_uses_crop_image(model) -> bool:
+    module = _unwrap(model)
+    return bool(getattr(module, "uses_crop_image", lambda: True)())
 
 
 def _reduce_logs(logs: Dict[str, float], count: int) -> Dict[str, float]:

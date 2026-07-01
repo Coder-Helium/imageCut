@@ -126,17 +126,22 @@ def _predict_candidate_scores(
     h, w = img.shape[:2]
     image_tensor = resize_to_tensor(img, image_size).unsqueeze(0).to(device)
     graph = model.encode_graph(image_tensor)
+    needs_crop = bool(getattr(model, "uses_crop_image", lambda: True)())
     preds: List[float] = []
     for start in range(0, len(candidates), batch_size):
         batch = candidates[start : start + batch_size]
         boxes = [item["box"] for item in batch]
-        crops = torch.stack([resize_to_tensor(crop_rgb(img, box), crop_size) for box in boxes]).to(device, non_blocking=True)
+        crops = (
+            torch.stack([resize_to_tensor(crop_rgb(img, box), crop_size) for box in boxes]).to(device, non_blocking=True)
+            if needs_crop
+            else None
+        )
         box_feat = torch.tensor(
             [candidate_box_features(normalize_xyxy(box, w, h)) for box in boxes],
             dtype=torch.float32,
             device=device,
         )
-        image_batch = image_tensor.expand(len(batch), -1, -1, -1)
+        image_batch = image_tensor.expand(len(batch), -1, -1, -1) if needs_crop else None
         out = model(image_batch, crops, box_feat, graph=_expand_graph(graph, len(batch)))
         score = out.get("score_logit", out["score"])
         preds.extend(float(v) for v in score.detach().cpu().tolist())

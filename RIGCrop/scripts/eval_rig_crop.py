@@ -54,8 +54,8 @@ def main() -> None:
             winner, loser = _score_pair(
                 model,
                 image,
-                batch["winner_crop"].to(device, non_blocking=True),
-                batch["loser_crop"].to(device, non_blocking=True),
+                batch["winner_crop"].to(device, non_blocking=True) if "winner_crop" in batch else None,
+                batch["loser_crop"].to(device, non_blocking=True) if "loser_crop" in batch else None,
                 batch["winner_box_feat"].to(device, non_blocking=True),
                 batch["loser_box_feat"].to(device, non_blocking=True),
                 graph,
@@ -86,16 +86,24 @@ def main() -> None:
 def _score_pair(
     model: RIGCropModel,
     image: torch.Tensor,
-    winner_crop: torch.Tensor,
-    loser_crop: torch.Tensor,
+    winner_crop: torch.Tensor | None,
+    loser_crop: torch.Tensor | None,
     winner_box_feat: torch.Tensor,
     loser_box_feat: torch.Tensor,
     graph: Dict[str, torch.Tensor],
 ) -> tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
     batch_size = image.size(0)
+    if _model_uses_crop_image(model):
+        if winner_crop is None or loser_crop is None:
+            raise ValueError("winner_crop and loser_crop are required when model uses crop_backbone mode")
+        image_arg = torch.cat([image, image], dim=0)
+        crop_arg = torch.cat([winner_crop, loser_crop], dim=0)
+    else:
+        image_arg = None
+        crop_arg = None
     out = model(
-        torch.cat([image, image], dim=0),
-        torch.cat([winner_crop, loser_crop], dim=0),
+        image_arg,
+        crop_arg,
         torch.cat([winner_box_feat, loser_box_feat], dim=0),
         graph=_repeat_graph_for_pair(graph, batch_size),
     )
@@ -123,6 +131,10 @@ def _repeat_graph_for_pair(graph: Dict[str, torch.Tensor], batch_size: int) -> D
 
 def _ranking_score(out: Dict[str, torch.Tensor]) -> torch.Tensor:
     return out.get("score_logit", out["score"])
+
+
+def _model_uses_crop_image(model: RIGCropModel) -> bool:
+    return bool(getattr(model, "uses_crop_image", lambda: True)())
 
 
 if __name__ == "__main__":
