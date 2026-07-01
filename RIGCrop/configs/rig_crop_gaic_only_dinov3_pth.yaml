@@ -1,37 +1,27 @@
 seed: 42
 device: auto
-output_dir: RIGCrop/runs/rig_crop_cpc_gaic_dinov3_pth
+output_dir: RIGCrop/runs/rig_crop_gaic_only_dinov3_pth
 best_metric: val_gaic_acc10
 
-# DDP uses this as per-process batch size. Start conservatively for DINOv3-B.
-batch_size: 6
+# GAIC-only training is smaller than CPC+GAIC mixed training, but the listwise
+# branch scores all GAICD candidates per image. Start conservatively.
+batch_size: 16
 gaic_listwise_batch_size: 1
 gaic_val_batch_size: 1
 gaic_listwise_every: 1
 gaic_eval_interval: 1
-num_workers: 4
+num_workers: 6
 persistent_workers: true
-prefetch_factor: 4
-epochs: 30
-log_interval: 1000
+prefetch_factor: 2
+epochs: 20
+log_interval: 200
 ddp_timeout_seconds: 7200
 find_unused_parameters: false
-lr: 0.0001
+lr: 0.00003
 weight_decay: 0.0001
 
 train_datasets:
-  - jsonl_path: /home/hmx/nas/beauty_dataset/data/cpc_rig/metadata/train.jsonl
-    image_size: 384
-    crop_size: 224
-    max_records:
-    max_pairs_per_record: 128
-    max_nodes: 12
-    derive_pairs_from_scores: true
-    image_cache_size: 8
-    compact_records: true
-    return_crops: false
-  - jsonl_path: /home/hmx/nas/beauty_dataset/data/gaic_rig/metadata/train.jsonl
-    repeat: 8
+  - jsonl_path: /root/autodl-tmp/data/beauty_dataset/data/gaic_rig/metadata/train.compact.jsonl
     image_size: 384
     crop_size: 224
     max_records:
@@ -44,7 +34,7 @@ train_datasets:
     return_crops: false
 
 gaic_listwise_train_dataset:
-  jsonl_path: /home/hmx/nas/beauty_dataset/data/gaic_rig/metadata/train.jsonl
+  jsonl_path: /root/autodl-tmp/data/beauty_dataset/data/gaic_rig/metadata/train.compact.jsonl
   image_size: 384
   max_records:
   max_nodes: 12
@@ -53,7 +43,7 @@ gaic_listwise_train_dataset:
   image_cache_size: 8
 
 gaic_listwise_val_dataset:
-  jsonl_path: /home/hmx/nas/beauty_dataset/data/gaic_rig/metadata/val.jsonl
+  jsonl_path: /root/autodl-tmp/data/beauty_dataset/data/gaic_rig/metadata/val.compact.jsonl
   image_size: 384
   max_records:
   max_nodes: 12
@@ -62,13 +52,14 @@ gaic_listwise_val_dataset:
   image_cache_size: 8
 
 val_dataset:
-  jsonl_path: /home/hmx/nas/beauty_dataset/data/cpc_rig/metadata/val.jsonl
+  jsonl_path: /root/autodl-tmp/data/beauty_dataset/data/gaic_rig/metadata/val.compact.jsonl
   image_size: 384
   crop_size: 224
   max_records:
   max_pairs_per_record: 128
   max_nodes: 12
   derive_pairs_from_scores: true
+  min_score_gap: 0.05
   image_cache_size: 8
   compact_records: true
   return_crops: false
@@ -79,11 +70,11 @@ model:
   box_feat_dim: 8
   backbone:
     type: torchhub_dinov3
-    repo: /home/hmx/dinov3
+    repo: /root/dinov3
     source: local
     name: dinov3_vitb16
     pretrained: true
-    weights: /home/hmx/nas/dinov3/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth
+    weights: /root/dinov3/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth
   num_entity_layers: 6
   num_crop_layers: 3
   num_crop_queries: 16
@@ -94,9 +85,9 @@ model:
 
 loss:
   crop_pair: 1.0
-  gaic_listwise: 0.5
-  gaic_topk: 0.5
-  gaic_listwise_temperature: 0.35
+  gaic_listwise: 0.7
+  gaic_topk: 0.7
+  gaic_listwise_temperature: 0.30
   gaic_topk_positive: 5
   gaic_topk_negative_after: 10
   gaic_topk_margin: 1.0

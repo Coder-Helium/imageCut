@@ -11,6 +11,64 @@ def pairwise_crop_loss(winner_score: torch.Tensor, loser_score: torch.Tensor, we
     return (F.softplus(-(winner_score - loser_score)) * weight).mean()
 
 
+def listwise_crop_loss(
+    pred_scores: torch.Tensor,
+    target_scores: torch.Tensor,
+    mask: torch.Tensor,
+    temperature: float = 0.35,
+) -> torch.Tensor:
+    """ListNet-style loss for GAICD candidate MOS ranking.
+
+    Args:
+        pred_scores: B x C predicted crop logits.
+        target_scores: B x C human MOS/final scores.
+        mask: B x C valid candidate mask.
+        temperature: lower values focus more probability mass on top-MOS crops.
+    """
+    mask = mask.bool()
+    temp = max(float(temperature), 1e-6)
+    pred = pred_scores.masked_fill(~mask, -1e4)
+    target = (target_scores / temp).masked_fill(~mask, -1e4)
+    target_prob = torch.softmax(target, dim=-1).detach()
+    log_prob = torch.log_softmax(pred, dim=-1)
+    per_item = -(target_prob * log_prob).sum(dim=-1)
+    valid_rows = mask.sum(dim=-1) > 1
+    if not valid_rows.any():
+        return pred_scores.new_zeros(())
+    return per_item[valid_rows].mean()
+
+
+def topk_hard_negative_loss(
+    pred_scores: torch.Tensor,
+    target_scores: torch.Tensor,
+    mask: torch.Tensor,
+    positive_topk: int = 5,
+    negative_after: int = 10,
+    margin: float = 1.0,
+) -> torch.Tensor:
+    """Push GAICD top-MOS crops above high-scoring hard negatives."""
+    losses = []
+    pos_k = max(1, int(positive_topk))
+    neg_after = max(pos_k + 1, int(negative_after))
+    for pred, target, valid in zip(pred_scores, target_scores, mask.bool()):
+        idx = torch.nonzero(valid, as_tuple=False).flatten()
+        if idx.numel() <= pos_k:
+            continue
+        order = idx[torch.argsort(target[idx], descending=True)]
+        pos_idx = order[: min(pos_k, order.numel())]
+        neg_idx = order[min(neg_after, order.numel()) :]
+        if neg_idx.numel() == 0:
+            neg_idx = order[pos_idx.numel() :]
+        if pos_idx.numel() == 0 or neg_idx.numel() == 0:
+            continue
+        hard_pos = pred[pos_idx].min()
+        hard_neg = pred[neg_idx].max()
+        losses.append(F.softplus(hard_neg - hard_pos + float(margin)))
+    if not losses:
+        return pred_scores.new_zeros(())
+    return torch.stack(losses).mean()
+
+
 def graph_supervision_loss(out: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
     valid = batch["node_valid"].float()
     has_box = batch["node_has_box"].float() * valid

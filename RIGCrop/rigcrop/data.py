@@ -3,7 +3,7 @@ from __future__ import annotations
 import random
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import torch
 from torch.utils.data import Dataset
@@ -137,6 +137,125 @@ class RIGPairwiseDataset(Dataset):
         return img, full_tensor
 
 
+class RIGCandidateListDataset(Dataset):
+    """Per-image candidate-list dataset for GAICD-style listwise training.
+
+    Each item keeps all scored candidates for one image so the model can learn
+    to rank the full GAICD candidate set instead of only sampled crop pairs.
+    """
+
+    def __init__(
+        self,
+        jsonl_path: str | Path,
+        image_size: int = 384,
+        max_records: Optional[int] = None,
+        max_nodes: int = 8,
+        max_candidates: Optional[int] = None,
+        compact_records: bool = True,
+        keep_raw_middle_state: bool = False,
+        keep_node_text: bool = False,
+        image_cache_size: int = 8,
+    ) -> None:
+        records = load_jsonl(jsonl_path, max_records=max_records or 0)
+        if compact_records:
+            records = [
+                compact_rig_record(
+                    rec,
+                    max_nodes=max_nodes,
+                    build_if_missing=False,
+                    keep_raw_middle_state=keep_raw_middle_state,
+                    keep_node_text=keep_node_text,
+                )
+                for rec in records
+            ]
+        self.records: List[Dict[str, Any]] = []
+        for rec in records:
+            candidates = _scored_candidates(rec.get("candidates", []) or [])
+            if max_candidates is not None and len(candidates) > max_candidates:
+                candidates = candidates[:max_candidates]
+            if len(candidates) < 2:
+                continue
+            item = dict(rec)
+            item["candidates"] = candidates
+            self.records.append(item)
+        self.image_size = image_size
+        self.max_nodes = max_nodes
+        self.image_cache_size = max(0, int(image_cache_size or 0))
+        self._image_cache: OrderedDict[int, Any] = OrderedDict()
+        self._image_tensor_cache: OrderedDict[int, torch.Tensor] = OrderedDict()
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        rec = self.records[idx]
+        img, full_tensor = self._load_image(idx, rec)
+        h, w = img.shape[:2]
+        candidates = rec.get("candidates", []) or []
+        box_feats = [
+            candidate_box_features(_box_for_features(cand["box"], w, h))
+            for cand in candidates
+        ]
+        scores = [float(cand["teacher_score"]) for cand in candidates]
+        rig = rec.get("rig_targets", {}) if isinstance(rec.get("rig_targets"), dict) else {}
+        return {
+            "image": full_tensor,
+            "candidate_box_feats": torch.tensor(box_feats, dtype=torch.float32),
+            "candidate_scores": torch.tensor(scores, dtype=torch.float32),
+            "candidate_mask": torch.ones(len(candidates), dtype=torch.bool),
+            "sample_id": rec.get("sample_id", ""),
+            **_rig_target_tensors(rig, self.max_nodes),
+        }
+
+    def _load_image(self, ridx: int, rec: Dict[str, Any]) -> Tuple[Any, torch.Tensor]:
+        if self.image_cache_size <= 0:
+            img = read_image_rgb(rec["image_path"])
+            return img, resize_to_tensor(img, self.image_size)
+
+        img = self._image_cache.get(ridx)
+        full_tensor = self._image_tensor_cache.get(ridx)
+        if img is not None and full_tensor is not None:
+            self._image_cache.move_to_end(ridx)
+            self._image_tensor_cache.move_to_end(ridx)
+            return img, full_tensor
+
+        img = read_image_rgb(rec["image_path"])
+        full_tensor = resize_to_tensor(img, self.image_size)
+        self._image_cache[ridx] = img
+        self._image_tensor_cache[ridx] = full_tensor
+        self._image_cache.move_to_end(ridx)
+        self._image_tensor_cache.move_to_end(ridx)
+        while len(self._image_cache) > self.image_cache_size:
+            self._image_cache.popitem(last=False)
+        while len(self._image_tensor_cache) > self.image_cache_size:
+            self._image_tensor_cache.popitem(last=False)
+        return img, full_tensor
+
+
+def collate_candidate_lists(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
+    max_candidates = max(int(item["candidate_box_feats"].size(0)) for item in batch)
+    box_dim = int(batch[0]["candidate_box_feats"].size(-1))
+    out: Dict[str, Any] = {
+        "image": torch.stack([item["image"] for item in batch]),
+        "candidate_box_feats": torch.zeros(len(batch), max_candidates, box_dim, dtype=torch.float32),
+        "candidate_scores": torch.zeros(len(batch), max_candidates, dtype=torch.float32),
+        "candidate_mask": torch.zeros(len(batch), max_candidates, dtype=torch.bool),
+        "sample_id": [item.get("sample_id", "") for item in batch],
+    }
+    for idx, item in enumerate(batch):
+        count = int(item["candidate_box_feats"].size(0))
+        out["candidate_box_feats"][idx, :count] = item["candidate_box_feats"]
+        out["candidate_scores"][idx, :count] = item["candidate_scores"]
+        out["candidate_mask"][idx, :count] = item["candidate_mask"]
+
+    for key, value in batch[0].items():
+        if key in out or key in {"candidate_box_feats", "candidate_scores", "candidate_mask", "sample_id", "image"}:
+            continue
+        if torch.is_tensor(value):
+            out[key] = torch.stack([item[key] for item in batch])
+    return out
+
+
 def _derive_pairs_from_candidate_scores(rec: Dict[str, Any], min_score_gap: float = 0.05) -> List[Dict[str, Any]]:
     candidates = rec.get("candidates", []) or []
     scored: List[Tuple[str, float]] = []
@@ -172,6 +291,46 @@ def _derive_pairs_from_candidate_scores(rec: Dict[str, Any], min_score_gap: floa
             else:
                 pairs.append({"winner": cid_b, "loser": cid_a, "weight": abs(diff), "source": "score_derived_pair"})
     return pairs
+
+
+def _scored_candidates(candidates: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for idx, cand in enumerate(candidates):
+        score = _candidate_score(cand)
+        box = cand.get("box")
+        if score is None or not isinstance(box, list) or len(box) < 4:
+            continue
+        item = dict(cand)
+        item["candidate_id"] = str(cand.get("candidate_id", idx))
+        item["teacher_score"] = float(score)
+        out.append(item)
+    return out
+
+
+def _candidate_score(cand: Dict[str, Any]) -> float | None:
+    scores = cand.get("scores", {}) if isinstance(cand.get("scores"), dict) else {}
+    value = scores.get("mos", scores.get("final_score", cand.get("score", None)))
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _box_is_normalized(box: Sequence[float]) -> bool:
+    try:
+        vals = [float(v) for v in box[:4]]
+    except (TypeError, ValueError):
+        return False
+    return all(-1e-6 <= v <= 1.0 + 1e-6 for v in vals)
+
+
+def _box_for_features(box: Sequence[float], image_w: int, image_h: int) -> List[float]:
+    vals = [float(v) for v in box[:4]]
+    if _box_is_normalized(vals):
+        return vals
+    return normalize_xyxy(vals, image_w, image_h)
 
 
 def _utility_for_candidate(utilities: Dict[str, Any], candidate_id: str) -> float:
